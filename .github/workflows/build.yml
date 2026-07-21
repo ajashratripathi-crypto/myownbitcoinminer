@@ -2,12 +2,19 @@ name: Build CYD Bitcoin Miner
 
 on:
   workflow_dispatch:
+
   push:
     branches:
       - main
+
     paths:
-      - "CYD-Bitcoin-Miner/**"
+      - "CYD-Bitcoin-Miner/src/**"
+      - "CYD-Bitcoin-Miner/platformio.ini"
+      - "CYD-Bitcoin-Miner/installer/**"
       - ".github/workflows/build.yml"
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -21,20 +28,30 @@ jobs:
       - name: Download repository
         uses: actions/checkout@v4
 
-      - name: Install PlatformIO esptool
-        run: pip install platformio esptool
-
-      - name: Compile firmware
-        run: pio run -e cyd
-
-      - name: Find boot application
-        id: bootapp
+      - name: Install PlatformIO and esptool
         run: |
-          BOOT_APP=$(find ~/.platformio -name boot_app0.bin | head -n 1)
-          echo "path=$BOOT_APP" >> "$GITHUB_OUTPUT"
-          echo "Found boot app: $BOOT_APP"
+          python -m pip install --upgrade platformio esptool
 
-      - name: Create one complete BIN
+      - name: Compile CYD firmware
+        run: |
+          pio run -e cyd
+
+      - name: Locate boot application
+        id: bootapp
+        shell: bash
+        run: |
+          BOOT_APP="$(find "$HOME/.platformio" -name boot_app0.bin | head -n 1)"
+
+          if [ -z "$BOOT_APP" ]; then
+            echo "boot_app0.bin was not found"
+            exit 1
+          fi
+
+          echo "path=$BOOT_APP" >> "$GITHUB_OUTPUT"
+          echo "Boot application: $BOOT_APP"
+
+      - name: Create one complete flashable BIN
+        shell: bash
         run: |
           python -m esptool \
             --chip esp32 \
@@ -47,9 +64,36 @@ jobs:
             0xe000 "${{ steps.bootapp.outputs.path }}" \
             0x10000 .pio/build/cyd/firmware.bin
 
-      - name: Upload finished firmware
+      - name: Copy BIN into ESP Web Tools website
+        shell: bash
+        run: |
+          mkdir -p installer/firmware
+
+          cp CYD_Bitcoin_Miner_Complete.bin \
+            installer/firmware/CYD_Bitcoin_Miner_Complete.bin
+
+      - name: Upload downloadable firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CYD-Bitcoin-Miner
+          name: CYD-Bitcoin-Miner-Firmware
           path: CYD-Bitcoin-Miner/CYD_Bitcoin_Miner_Complete.bin
           if-no-files-found: error
+
+      - name: Save firmware to repository
+        shell: bash
+        run: |
+          cd "$GITHUB_WORKSPACE"
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            CYD-Bitcoin-Miner/installer/firmware/CYD_Bitcoin_Miner_Complete.bin
+
+          if git diff --cached --quiet; then
+            echo "Firmware is already current."
+          else
+            git commit -m "Update CYD firmware [skip ci]"
+            git push
+          fi
