@@ -21,8 +21,8 @@ jobs:
       - name: Download repository
         uses: actions/checkout@v4
 
-      - name: Install PlatformIO esptools
-        run: pip install platformio esptools
+      - name: Install PlatformIO esptool
+        run: pip install platformio esptool
 
       - name: Compile firmware
         run: pio run -e cyd
