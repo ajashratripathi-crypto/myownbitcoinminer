@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>CYD Bitcoin Miner Installer</title>
+
+    <script
+        type="module"
+        src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"
+    ></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            min-height: 100vh;
+            margin: 0;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            background:
+                radial-gradient(circle at top, #33220c, #080808 65%);
+            color: white;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        .card {
+            width: min(460px, 100%);
+            padding: 34px;
+            border: 1px solid #463619;
+            border-radius: 24px;
+            background: rgba(22, 22, 22, 0.96);
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+            text-align: center;
+        }
+
+        .bitcoin {
+            width: 82px;
+            height: 82px;
+            margin: 0 auto 20px;
+            display: grid;
+            place-items: center;
+            border-radius: 50%;
+            background: #f7931a;
+            font-size: 56px;
+            font-weight: bold;
+        }
+
+        h1 {
+            margin: 0 0 10px;
+            font-size: 30px;
+        }
+
+        p {
+            margin: 0 0 24px;
+            color: #bcbcbc;
+            line-height: 1.5;
+        }
+
+        .model {
+            display: inline-block;
+            margin-bottom: 26px;
+            padding: 8px 13px;
+            border-radius: 999px;
+            background: #262626;
+            color: #f7a936;
+            font-size: 13px;
+        }
+
+        button {
+            width: 100%;
+            padding: 16px 20px;
+            border: 0;
+            border-radius: 12px;
+            background: #f7931a;
+            color: white;
+            font-size: 17px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #ffa62d;
+        }
+
+        .instructions {
+            margin-top: 24px;
+            text-align: left;
+            color: #a8a8a8;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .warning {
+            margin-top: 20px;
+            color: #e4c27d;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <main class="card">
+        <div class="bitcoin">₿</div>
+
+        <h1>CYD Bitcoin Miner</h1>
+
+        <p>
+            Install the Bitcoin hashing dashboard directly from Chrome.
+            No Arduino IDE or Linux tools required.
+        </p>
+
+        <div class="model">
+            ESP32-2432S028R · 2.8-inch CYD
+        </div>
+
+        <esp-web-install-button manifest="manifest.json">
+            <button slot="activate">
+                Install Bitcoin Miner
+            </button>
+
+            <span slot="unsupported">
+                Use Chrome or Microsoft Edge on desktop.
+            </span>
+        </esp-web-install-button>
+
+        <div class="instructions">
+            1. Connect the CYD using a USB data cable.<br>
+            2. Turn Linux USB sharing off.<br>
+            3. Click Install Bitcoin Miner.<br>
+            4. Select USB Serial.<br>
+            5. Wait for installation to finish.
+        </div>
+
+        <div class="warning">
+            Installing firmware will replace the program currently on the CYD.
+        </div>
+    </main>
+</body>
+</html>
