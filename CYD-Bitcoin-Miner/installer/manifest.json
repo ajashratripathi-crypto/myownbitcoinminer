@@ -1,0 +1,16 @@
+{
+  "name": "CYD Bitcoin Miner",
+  "version": "1.0.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        {
+          "path": "firmware/CYD_Bitcoin_Miner_Complete.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
