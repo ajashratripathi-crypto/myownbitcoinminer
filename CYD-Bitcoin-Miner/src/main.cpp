@@ -17,6 +17,7 @@
   Required libraries:
   - TFT_eSPI
   - ArduinoJson
+  - WiFiManager
 
   TFT_eSPI configuration:
     #define ILI9341_DRIVER
@@ -33,12 +34,18 @@
 #include <HTTPClient.h>
 #include <TFT_eSPI.h>
 #include <ArduinoJson.h>
+#include <WiFiManager.h>
 #include "mbedtls/sha256.h"
 
 // ---------------- USER SETTINGS ----------------
 
-const char* WIFI_SSID     = "YOUR_WIFI_NAME";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+// Wi-Fi credentials are NOT stored in this source code.
+// On first boot, the CYD creates a setup hotspot named CYD-Miner-Setup.
+// Connect to it from a phone or Chromebook and choose your Wi-Fi network.
+// The ESP32 stores the selected credentials in its own flash memory.
+
+const char* SETUP_AP_NAME = "CYD-Miner-Setup";
+const char* SETUP_AP_PASSWORD = "bitcoin123";
 
 const char* MINER_NAME = "ORANGE NODE";
 const uint32_t PRICE_UPDATE_MS = 86400000UL;
@@ -409,28 +416,92 @@ void drawCurrentPage() {
 
 // ---------------- NETWORK ----------------
 
-void connectWiFi() {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
+void drawWiFiSetupScreen() {
   tft.fillScreen(C_BG);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(C_ORANGE, C_BG);
+
+  tft.fillCircle(160, 48, 24, C_ORANGE);
+  tft.setTextColor(TFT_WHITE, C_ORANGE);
   tft.setTextSize(3);
-  tft.drawString("ORANGE NODE", 160, 88);
+  tft.drawString("B", 160, 48);
+
+  tft.setTextColor(C_TEXT, C_BG);
+  tft.setTextSize(2);
+  tft.drawString("WI-FI SETUP", 160, 88);
 
   tft.setTextColor(C_MUTED, C_BG);
   tft.setTextSize(1);
-  tft.drawString("CONNECTING TO WI-FI", 160, 124);
+  tft.drawString("Connect your phone or Chromebook to:", 160, 116);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 24) {
-    tft.fillCircle(112 + (attempts % 9) * 12, 150, 3, C_ORANGE);
-    delay(350);
-    attempts++;
-  }
+  tft.setTextColor(C_ORANGE, C_BG);
+  tft.setTextSize(2);
+  tft.drawString(SETUP_AP_NAME, 160, 142);
+
+  tft.setTextColor(C_MUTED, C_BG);
+  tft.setTextSize(1);
+  tft.drawString("Password:", 160, 168);
+
+  tft.setTextColor(C_TEXT, C_BG);
+  tft.setTextSize(2);
+  tft.drawString(SETUP_AP_PASSWORD, 160, 188);
+
+  tft.setTextColor(C_BLUE, C_BG);
+  tft.setTextSize(1);
+  tft.drawString("A setup page should open automatically.", 160, 216);
 
   tft.setTextDatum(TL_DATUM);
+}
+
+void connectWiFi() {
+  WiFi.mode(WIFI_STA);
+
+  WiFiManager wifiManager;
+  wifiManager.setConfigPortalTimeout(180);
+  wifiManager.setConnectTimeout(20);
+  wifiManager.setTitle("CYD Bitcoin Miner Setup");
+  wifiManager.setClass("invert");
+
+  drawWiFiSetupScreen();
+
+  bool connected = wifiManager.autoConnect(
+    SETUP_AP_NAME,
+    SETUP_AP_PASSWORD
+  );
+
+  if (!connected) {
+    tft.fillScreen(C_BG);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(C_RED, C_BG);
+    tft.setTextSize(2);
+    tft.drawString("WI-FI SETUP FAILED", 160, 95);
+
+    tft.setTextColor(C_MUTED, C_BG);
+    tft.setTextSize(1);
+    tft.drawString("Restart the CYD and try again.", 160, 128);
+    tft.setTextDatum(TL_DATUM);
+
+    delay(5000);
+    ESP.restart();
+  }
+
+  tft.fillScreen(C_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(C_GREEN, C_BG);
+  tft.setTextSize(2);
+  tft.drawString("WI-FI CONNECTED", 160, 100);
+
+  tft.setTextColor(C_MUTED, C_BG);
+  tft.setTextSize(1);
+  tft.drawString(WiFi.SSID(), 160, 130);
+  tft.setTextDatum(TL_DATUM);
+
+  delay(1200);
+}
+
+void resetSavedWiFi() {
+  WiFiManager wifiManager;
+  wifiManager.resetSettings();
+  ESP.restart();
 }
 
 void fetchBitcoinPrice() {
