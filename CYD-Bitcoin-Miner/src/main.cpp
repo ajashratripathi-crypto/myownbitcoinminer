@@ -1,37 +1,47 @@
-
 /*
-  CYD Bitcoin Lab V6 — MAIN.CPP ONLY
+  CYD Bitcoin Lab V8 — MAIN.CPP ONLY
+  ----------------------------------
+  Target: ESP32-2432S028R / ESP32-WROOM-32E / ILI9341 320x240 landscape
+
   Replace only:
     CYD-Bitcoin-Miner/src/main.cpp
 
-  Target board:
-    ESP32-2432S028R
-    ESP32-WROOM-32E
-    ILI9341 display
+  Existing platformio.ini libraries:
+    - TFT_eSPI
+    - ArduinoJson
+    - WiFiManager
 
-  Existing platformio.ini must already include:
-    bodmer/TFT_eSPI
-    bblanchon/ArduinoJson
-    tzapu/WiFiManager
+  What this firmware displays
+  ---------------------------
+  MINER PAGE
+    - measured local double-SHA256 hashrate
+    - factual local shares at a defined 16-bit target
+    - best leading-zero-bit score
+    - total hashes
+    - current nonce
+    - uptime
+    - current Bitcoin block height
 
-  Features:
-    - First-run Wi-Fi setup portal
-    - Optional device name and Bitcoin address
-    - Stable local double-SHA256 benchmark
-    - Coinbase BTC-USD ticker, stats and daily candles
-    - mempool.space block height and recommended fees
-    - Lifetime hashes, runtime, boot count, best score saved in Preferences
-    - Automatic page change every 10 seconds by default
-    - Full screen redraw only on page change
-    - Only changing values update every second
-    - Short BOOT press = next page
-    - Hold BOOT 3 seconds = reset Wi-Fi and reopen setup
+  MARKET PAGE
+    - Coinbase BTC-USD price
+    - factual 24-hour change, high and low
+    - hourly candlesticks for the last 24 hours
+    - close-price line over the candlesticks
+    - volume bars
 
-  This firmware does NOT:
-    - connect to a mining pool
-    - submit shares
-    - move Bitcoin
-    - claim earnings
+  NETWORK PAGE
+    - mempool.space block height
+    - fastest, 30-minute and 1-hour fee estimates
+    - Wi-Fi signal and API status
+
+  DEVICE PAGE
+    - CPU, heap, minimum heap, flash, boot count and reset reason
+
+  Important honesty note
+  ----------------------
+  This is a local SHA-256 benchmark/lottery display. It does not connect to a
+  mining pool, submit shares, move Bitcoin or claim earnings. "Local shares"
+  are hashes meeting this firmware's explicitly defined 16-bit local target.
 */
 
 #include <Arduino.h>
@@ -46,53 +56,58 @@
 #include "esp_system.h"
 #include "mbedtls/sha256.h"
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // Hardware
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 static constexpr uint8_t PIN_BACKLIGHT = 21;
 static constexpr uint8_t PIN_BOOT = 0;
 
 TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite sprite = TFT_eSprite(&tft);
+Preferences preferences;
 
-// -----------------------------------------------------------------------------
-// Theme
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Display theme
+// ============================================================================
 
-static constexpr uint16_t C_BG      = 0x0000;
-static constexpr uint16_t C_PANEL   = 0x10A2;
-static constexpr uint16_t C_PANEL2  = 0x18E3;
-static constexpr uint16_t C_BORDER  = 0x3186;
-static constexpr uint16_t C_TEXT    = 0xFFFF;
-static constexpr uint16_t C_MUTED   = 0x8C71;
-static constexpr uint16_t C_ORANGE  = 0xFD20;
-static constexpr uint16_t C_CYAN    = 0x05FF;
-static constexpr uint16_t C_GREEN   = 0x07E0;
-static constexpr uint16_t C_RED     = 0xF800;
-static constexpr uint16_t C_YELLOW  = 0xFFE0;
-static constexpr uint16_t C_PURPLE  = 0xA81F;
+static constexpr uint16_t COL_BG          = 0x0000;
+static constexpr uint16_t COL_HEADER      = 0x0841;
+static constexpr uint16_t COL_PANEL       = 0x1082;
+static constexpr uint16_t COL_PANEL_ALT   = 0x18C3;
+static constexpr uint16_t COL_BORDER      = 0x31A6;
+static constexpr uint16_t COL_GRID        = 0x2124;
+static constexpr uint16_t COL_TEXT        = 0xFFFF;
+static constexpr uint16_t COL_MUTED       = 0x9CD3;
+static constexpr uint16_t COL_ORANGE      = 0xFD20;
+static constexpr uint16_t COL_ORANGE_DARK = 0xA300;
+static constexpr uint16_t COL_CYAN        = 0x05FF;
+static constexpr uint16_t COL_GREEN       = 0x07E0;
+static constexpr uint16_t COL_RED         = 0xF800;
+static constexpr uint16_t COL_YELLOW      = 0xFFE0;
+static constexpr uint16_t COL_PURPLE      = 0xA81F;
 
-// -----------------------------------------------------------------------------
-// Constants
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Firmware and timing
+// ============================================================================
 
-static const char* FW_VERSION = "6.0.0";
-static const char* AP_NAME = "CYD-Miner-Setup";
-static const char* AP_PASSWORD = "bitcoin123";
+static const char* FIRMWARE_VERSION = "8.0.0";
+static const char* SETUP_AP_NAME = "CYD-Miner-Setup";
+static const char* SETUP_AP_PASSWORD = "bitcoin123";
 
-static constexpr uint32_t VALUE_UPDATE_MS = 1000;
-static constexpr uint32_t MARKET_UPDATE_MS = 15UL * 60UL * 1000UL;
-static constexpr uint32_t NETWORK_UPDATE_MS = 5UL * 60UL * 1000UL;
-static constexpr uint32_t SAVE_UPDATE_MS = 15UL * 60UL * 1000UL;
+static constexpr uint32_t VALUE_REFRESH_MS = 1000;
+static constexpr uint32_t DEFAULT_PAGE_MS = 10000;
+static constexpr uint32_t TICKER_REFRESH_MS = 60UL * 1000UL;
+static constexpr uint32_t MARKET_REFRESH_MS = 10UL * 60UL * 1000UL;
+static constexpr uint32_t NETWORK_REFRESH_MS = 5UL * 60UL * 1000UL;
+static constexpr uint32_t SAVE_REFRESH_MS = 15UL * 60UL * 1000UL;
 static constexpr uint32_t WIFI_RECONNECT_MS = 15UL * 1000UL;
-static constexpr uint32_t BUTTON_LONG_MS = 3000;
-static constexpr uint16_t HASH_BATCH = 64;
-static constexpr uint8_t MAX_CANDLES = 14;
+static constexpr uint32_t LONG_BUTTON_PRESS_MS = 3000;
+static constexpr uint16_t HASH_BATCH_SIZE = 64;
+static constexpr uint8_t CHART_CANDLE_COUNT = 24;
 
-// -----------------------------------------------------------------------------
-// Configuration
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Configuration and persistent data
+// ============================================================================
 
 struct AppConfig {
   String deviceName = "ORANGE NODE";
@@ -102,76 +117,96 @@ struct AppConfig {
   uint16_t pageSeconds = 10;
 };
 
+struct LifetimeStats {
+  uint64_t hashesBeforeBoot = 0;
+  uint64_t runtimeBeforeBoot = 0;
+  uint64_t localSharesBeforeBoot = 0;
+  uint32_t bootCount = 0;
+  uint8_t bestBitsBeforeBoot = 0;
+};
+
 AppConfig config;
-Preferences prefs;
+LifetimeStats lifetime;
 
 char portalDeviceName[25] = "ORANGE NODE";
 char portalBitcoinAddress[91] = "";
 char portalUtcOffset[5] = "-4";
 char portalAutoRotate[2] = "1";
 char portalPageSeconds[4] = "10";
+bool portalSaveRequested = false;
 
-bool savePortalConfig = false;
-
-// -----------------------------------------------------------------------------
-// Lifetime stats
-// -----------------------------------------------------------------------------
-
-struct LifetimeStats {
-  uint64_t hashes = 0;
-  uint64_t runtimeSeconds = 0;
-  uint32_t boots = 0;
-  uint8_t bestZeroBits = 0;
-};
-
-LifetimeStats lifetime;
-
-// -----------------------------------------------------------------------------
-// Pages and timing
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Pages and runtime state
+// ============================================================================
 
 enum class Page : uint8_t {
-  HOME = 0,
+  MINER = 0,
   MARKET = 1,
   NETWORK = 2,
-  DEVICE = 3,
-  SETTINGS = 4
+  DEVICE = 3
 };
 
-static constexpr uint8_t PAGE_COUNT = 5;
-Page currentPage = Page::HOME;
+static constexpr uint8_t PAGE_COUNT = 4;
+Page currentPage = Page::MINER;
 
-bool pageNeedsDraw = true;
-bool marketChartNeedsDraw = true;
-
-uint32_t bootMs = 0;
-uint32_t lastValueMs = 0;
-uint32_t lastPageMs = 0;
-uint32_t lastMarketMs = 0;
-uint32_t lastNetworkMs = 0;
-uint32_t lastSaveMs = 0;
-uint32_t lastWifiReconnectMs = 0;
-uint32_t buttonDownMs = 0;
+bool pageNeedsFullDraw = true;
+bool chartNeedsDraw = true;
 bool buttonWasDown = false;
 
-// -----------------------------------------------------------------------------
-// Hash benchmark
-// -----------------------------------------------------------------------------
+uint32_t bootMillis = 0;
+uint32_t lastValueRefresh = 0;
+uint32_t lastPageChange = 0;
+uint32_t lastTickerRefresh = 0;
+uint32_t lastMarketRefresh = 0;
+uint32_t lastNetworkRefresh = 0;
+uint32_t lastSaveRefresh = 0;
+uint32_t lastWifiReconnect = 0;
+uint32_t buttonDownMillis = 0;
 
-uint8_t blockHeader[80];
-uint32_t nonceValue = 0;
+// Stagger the first API calls so startup remains responsive.
+enum class StartupFetchStep : uint8_t {
+  WAITING = 0,
+  BLOCK_HEIGHT = 1,
+  FEES = 2,
+  TICKER = 3,
+  STATS = 4,
+  CANDLES = 5,
+  COMPLETE = 6
+};
+
+enum class PendingApiTask : uint8_t {
+  NONE = 0,
+  MARKET_STATS = 1,
+  MARKET_CANDLES = 2,
+  NETWORK_HEIGHT = 3,
+  NETWORK_FEES = 4
+};
+
+StartupFetchStep startupFetchStep = StartupFetchStep::WAITING;
+PendingApiTask pendingApiTask = PendingApiTask::NONE;
+uint32_t nextStartupFetchMillis = 0;
+uint32_t pendingApiMillis = 0;
+
+// ============================================================================
+// Local SHA-256 benchmark
+// ============================================================================
+
+uint8_t benchmarkHeader[80];
+uint32_t currentNonce = 0;
 uint64_t sessionHashes = 0;
-uint32_t hashesThisSecond = 0;
-uint8_t sessionBestZeroBits = 0;
+uint64_t sessionLocalShares16 = 0;
+uint32_t hashesInWindow = 0;
+uint8_t sessionBestLeadingBits = 0;
+float currentHashrateKHs = 0.0f;
+float smoothedHashrateKHs = 0.0f;
 
-float currentKHs = 0;
-float smoothKHs = 0;
+mbedtls_sha256_context headerMidstate;
+mbedtls_sha256_context firstHashContext;
+mbedtls_sha256_context secondHashContext;
 
-mbedtls_sha256_context shaContext;
-
-// -----------------------------------------------------------------------------
+// ============================================================================
 // Coinbase market data
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 struct Candle {
   uint32_t timestamp = 0;
@@ -196,18 +231,18 @@ struct MarketData {
   float volume24h = 0;
   float change24h = 0;
 
-  Candle candles[MAX_CANDLES];
+  Candle candles[CHART_CANDLE_COUNT];
   uint8_t candleCount = 0;
 
-  uint32_t lastSuccessEpoch = 0;
-  String error = "Waiting for Coinbase";
+  String tickerStatus = "WAITING";
+  String chartStatus = "WAITING";
 };
 
 MarketData market;
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // Bitcoin network data
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 struct NetworkData {
   bool heightValid = false;
@@ -218,29 +253,27 @@ struct NetworkData {
   int halfHourFee = 0;
   int hourFee = 0;
 
-  uint32_t lastSuccessEpoch = 0;
-  String error = "Waiting for mempool.space";
+  String status = "WAITING";
 };
 
 NetworkData network;
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // Diagnostics
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 struct Diagnostics {
-  uint32_t minFreeHeap = UINT32_MAX;
-  uint32_t wifiReconnects = 0;
-  uint32_t marketFailures = 0;
-  uint32_t networkFailures = 0;
+  uint32_t minimumFreeHeap = UINT32_MAX;
+  uint32_t wifiReconnectCount = 0;
+  uint32_t apiFailureCount = 0;
   esp_reset_reason_t resetReason = ESP_RST_UNKNOWN;
 };
 
 Diagnostics diagnostics;
 
-// -----------------------------------------------------------------------------
-// Utility
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Formatting helpers
+// ============================================================================
 
 String compactNumber(double value) {
   char buffer[24];
@@ -272,52 +305,56 @@ String uptimeText(uint64_t seconds) {
     snprintf(
       buffer,
       sizeof(buffer),
-      "%lud %02lu:%02lu:%02lu",
-      (unsigned long)days,
-      (unsigned long)hours,
-      (unsigned long)minutes,
-      (unsigned long)remaining
+      "%lud %02lu:%02lu",
+      static_cast<unsigned long>(days),
+      static_cast<unsigned long>(hours),
+      static_cast<unsigned long>(minutes)
     );
   } else {
     snprintf(
       buffer,
       sizeof(buffer),
       "%02lu:%02lu:%02lu",
-      (unsigned long)hours,
-      (unsigned long)minutes,
-      (unsigned long)remaining
+      static_cast<unsigned long>(hours),
+      static_cast<unsigned long>(minutes),
+      static_cast<unsigned long>(remaining)
     );
   }
 
   return String(buffer);
 }
 
+String nonceText(uint32_t nonce) {
+  char buffer[12];
+  snprintf(buffer, sizeof(buffer), "%08lX", static_cast<unsigned long>(nonce));
+  return String(buffer);
+}
+
 String resetReasonText(esp_reset_reason_t reason) {
   switch (reason) {
-    case ESP_RST_POWERON: return "Power on";
-    case ESP_RST_EXT: return "External";
-    case ESP_RST_SW: return "Software";
-    case ESP_RST_PANIC: return "Crash";
-    case ESP_RST_INT_WDT: return "Interrupt WDT";
-    case ESP_RST_TASK_WDT: return "Task WDT";
-    case ESP_RST_WDT: return "Watchdog";
-    case ESP_RST_DEEPSLEEP: return "Deep sleep";
-    case ESP_RST_BROWNOUT: return "Brownout";
-    default: return "Unknown";
+    case ESP_RST_POWERON: return "POWER ON";
+    case ESP_RST_EXT: return "EXTERNAL";
+    case ESP_RST_SW: return "SOFTWARE";
+    case ESP_RST_PANIC: return "CRASH";
+    case ESP_RST_INT_WDT: return "INT WDT";
+    case ESP_RST_TASK_WDT: return "TASK WDT";
+    case ESP_RST_WDT: return "WATCHDOG";
+    case ESP_RST_DEEPSLEEP: return "DEEP SLEEP";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    default: return "UNKNOWN";
   }
 }
 
-String abbreviatedAddress(const String& address) {
-  if (address.length() == 0) {
-    return "Not set";
+String shortAddress(const String& address) {
+  if (address.isEmpty()) {
+    return "NOT SET";
   }
 
   if (address.length() <= 20) {
     return address;
   }
 
-  return address.substring(0, 9) + "..." +
-         address.substring(address.length() - 7);
+  return address.substring(0, 8) + "..." + address.substring(address.length() - 6);
 }
 
 String isoUtcTime(time_t value) {
@@ -326,78 +363,80 @@ String isoUtcTime(time_t value) {
 
   char buffer[30];
   strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &timeInfo);
-
   return String(buffer);
 }
 
-// -----------------------------------------------------------------------------
-// Preferences
-// -----------------------------------------------------------------------------
+uint64_t totalHashesAllTime() {
+  return lifetime.hashesBeforeBoot + sessionHashes;
+}
 
-void loadPreferences() {
-  prefs.begin("btc-lab", true);
+uint64_t totalLocalSharesAllTime() {
+  return lifetime.localSharesBeforeBoot + sessionLocalShares16;
+}
 
-  config.deviceName = prefs.getString("name", "ORANGE NODE");
-  config.bitcoinAddress = prefs.getString("btc", "");
-  config.utcOffsetHours = prefs.getInt("utc", -4);
-  config.autoRotate = prefs.getBool("rotate", true);
-  config.pageSeconds = prefs.getUShort("pageSec", 10);
+uint8_t bestBitsAllTime() {
+  return max(lifetime.bestBitsBeforeBoot, sessionBestLeadingBits);
+}
 
-  lifetime.hashes = prefs.getULong64("lifeHash", 0);
-  lifetime.runtimeSeconds = prefs.getULong64("lifeTime", 0);
-  lifetime.boots = prefs.getUInt("boots", 0);
-  lifetime.bestZeroBits = prefs.getUChar("bestBits", 0);
+// ============================================================================
+// Persistent storage
+// ============================================================================
 
-  prefs.end();
+void loadPersistentData() {
+  preferences.begin("btc-lab", true);
+
+  config.deviceName = preferences.getString("name", "ORANGE NODE");
+  config.bitcoinAddress = preferences.getString("btc", "");
+  config.utcOffsetHours = preferences.getInt("utc", -4);
+  config.autoRotate = preferences.getBool("rotate", true);
+  config.pageSeconds = preferences.getUShort("pageSec", 10);
+
+  lifetime.hashesBeforeBoot = preferences.getULong64("hashes", 0);
+  lifetime.runtimeBeforeBoot = preferences.getULong64("runtime", 0);
+  lifetime.localSharesBeforeBoot = preferences.getULong64("shares16", 0);
+  lifetime.bootCount = preferences.getUInt("boots", 0);
+  lifetime.bestBitsBeforeBoot = preferences.getUChar("bestBits", 0);
+
+  preferences.end();
 
   config.pageSeconds = constrain(config.pageSeconds, 5, 60);
-  lifetime.boots++;
+  lifetime.bootCount++;
 }
 
 void saveConfiguration() {
-  prefs.begin("btc-lab", false);
+  preferences.begin("btc-lab", false);
 
-  prefs.putString("name", config.deviceName);
-  prefs.putString("btc", config.bitcoinAddress);
-  prefs.putInt("utc", config.utcOffsetHours);
-  prefs.putBool("rotate", config.autoRotate);
-  prefs.putUShort("pageSec", config.pageSeconds);
+  preferences.putString("name", config.deviceName);
+  preferences.putString("btc", config.bitcoinAddress);
+  preferences.putInt("utc", config.utcOffsetHours);
+  preferences.putBool("rotate", config.autoRotate);
+  preferences.putUShort("pageSec", config.pageSeconds);
 
-  prefs.end();
+  preferences.end();
 }
 
 void saveLifetimeStats() {
-  prefs.begin("btc-lab", false);
+  preferences.begin("btc-lab", false);
 
-  prefs.putULong64("lifeHash", lifetime.hashes + sessionHashes);
-  prefs.putULong64(
-    "lifeTime",
-    lifetime.runtimeSeconds + ((millis() - bootMs) / 1000ULL)
+  preferences.putULong64("hashes", totalHashesAllTime());
+  preferences.putULong64(
+    "runtime",
+    lifetime.runtimeBeforeBoot + ((millis() - bootMillis) / 1000ULL)
   );
+  preferences.putULong64("shares16", totalLocalSharesAllTime());
+  preferences.putUInt("boots", lifetime.bootCount);
+  preferences.putUChar("bestBits", bestBitsAllTime());
 
-  prefs.putUInt("boots", lifetime.boots);
-
-  prefs.putUChar(
-    "bestBits",
-    max(lifetime.bestZeroBits, sessionBestZeroBits)
-  );
-
-  prefs.end();
-
-  lastSaveMs = millis();
+  preferences.end();
+  lastSaveRefresh = millis();
 }
 
-// -----------------------------------------------------------------------------
-// UI helpers
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Drawing primitives
+// ============================================================================
 
-void panel(int x, int y, int w, int h, uint16_t fill = C_PANEL) {
-  tft.fillRoundRect(x, y, w, h, 8, fill);
-  tft.drawRoundRect(x, y, w, h, 8, C_BORDER);
-}
-
-void leftText(
-  const String& value,
+void drawLeftText(
+  const String& text,
   int x,
   int y,
   uint16_t foreground,
@@ -406,783 +445,783 @@ void leftText(
 ) {
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(foreground, background);
-  tft.drawString(value, x, y, font);
+  tft.drawString(text, x, y, font);
 }
 
-void centerText(
-  const String& value,
-  int x,
-  int y,
+void drawCenteredText(
+  const String& text,
+  int centerX,
+  int centerY,
   uint16_t foreground,
   uint16_t background,
   uint8_t font
 ) {
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(foreground, background);
-  tft.drawString(value, x, y, font);
+  tft.drawString(text, centerX, centerY, font);
   tft.setTextDatum(TL_DATUM);
 }
 
-void spriteValue(
-  const String& value,
+void drawPanel(int x, int y, int width, int height, uint16_t fill = COL_PANEL) {
+  tft.fillRoundRect(x, y, width, height, 8, fill);
+  tft.drawRoundRect(x, y, width, height, 8, COL_BORDER);
+}
+
+/*
+  These two helpers completely clear a fixed rectangle before drawing a new
+  value. That is the key to avoiding outlined/ghost digits and overlapping text.
+*/
+void drawValueCentered(
+  const String& text,
   int x,
   int y,
   int width,
   int height,
   uint16_t foreground,
   uint16_t background,
-  uint8_t font,
-  uint8_t datum = MC_DATUM
+  uint8_t font
 ) {
-  sprite.deleteSprite();
+  tft.fillRect(x, y, width, height, background);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(foreground, background);
+  tft.drawString(text, x + width / 2, y + height / 2, font);
+  tft.setTextDatum(TL_DATUM);
+}
 
-  if (!sprite.createSprite(width, height)) {
-    return;
-  }
-
-  sprite.fillSprite(background);
-  sprite.setTextDatum(datum);
-  sprite.setTextColor(foreground, background);
-
-  int drawX = datum == MC_DATUM ? width / 2 : 0;
-  int drawY = datum == MC_DATUM ? height / 2 : 0;
-
-  sprite.drawString(value, drawX, drawY, font);
-  sprite.pushSprite(x, y);
-  sprite.deleteSprite();
+void drawValueLeft(
+  const String& text,
+  int x,
+  int y,
+  int width,
+  int height,
+  uint16_t foreground,
+  uint16_t background,
+  uint8_t font
+) {
+  tft.fillRect(x, y, width, height, background);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(foreground, background);
+  tft.drawString(text, x, y + height / 2, font);
+  tft.setTextDatum(TL_DATUM);
 }
 
 void drawHeader(const String& title, const String& subtitle) {
-  tft.fillRect(0, 0, 320, 34, C_PANEL);
-  tft.drawFastHLine(0, 33, 320, C_BORDER);
+  tft.fillRect(0, 0, 320, 33, COL_HEADER);
+  tft.drawFastHLine(0, 32, 320, COL_ORANGE_DARK);
 
-  tft.fillCircle(17, 17, 11, C_ORANGE);
-  centerText("B", 17, 17, C_TEXT, C_ORANGE, 2);
+  tft.fillCircle(17, 16, 11, COL_ORANGE);
+  drawCenteredText("B", 17, 16, COL_BG, COL_ORANGE, 2);
 
-  leftText(title, 36, 3, C_TEXT, C_PANEL, 2);
-  leftText(subtitle, 36, 20, C_MUTED, C_PANEL, 1);
+  drawLeftText(title, 35, 2, COL_TEXT, COL_HEADER, 2);
+  drawLeftText(subtitle, 35, 19, COL_MUTED, COL_HEADER, 1);
 
   bool online = WiFi.status() == WL_CONNECTED;
-
-  tft.fillCircle(301, 10, 4, online ? C_GREEN : C_RED);
-
-  centerText(
-    online ? "ONLINE" : "OFFLINE",
-    283,
+  tft.fillCircle(302, 10, 4, online ? COL_GREEN : COL_RED);
+  drawCenteredText(
+    online ? "LIVE" : "OFF",
+    291,
     24,
-    online ? C_GREEN : C_RED,
-    C_PANEL,
+    online ? COL_GREEN : COL_RED,
+    COL_HEADER,
     1
   );
 }
 
 void drawFooter() {
-  static const char* names[PAGE_COUNT] = {
-    "HOME", "BTC", "NET", "DEV", "SET"
-  };
+  static const char* pageLabels[PAGE_COUNT] = {"MINER", "MARKET", "NET", "DEVICE"};
+  static const int pageWidths[PAGE_COUNT] = {80, 80, 80, 80};
 
-  const int itemWidth = 64;
+  tft.fillRect(0, 215, 320, 25, COL_HEADER);
+  tft.drawFastHLine(0, 215, 320, COL_BORDER);
 
-  tft.fillRect(0, 216, 320, 24, C_PANEL);
-  tft.drawFastHLine(0, 216, 320, C_BORDER);
-
-  for (int index = 0; index < PAGE_COUNT; index++) {
-    bool selected = static_cast<int>(currentPage) == index;
+  int cursorX = 0;
+  for (uint8_t index = 0; index < PAGE_COUNT; index++) {
+    bool selected = static_cast<uint8_t>(currentPage) == index;
+    int itemWidth = pageWidths[index];
 
     if (selected) {
-      tft.fillRoundRect(
-        index * itemWidth + 4,
-        219,
-        56,
-        18,
-        6,
-        C_PANEL2
-      );
+      tft.fillRoundRect(cursorX + 6, 219, itemWidth - 12, 17, 5, COL_PANEL_ALT);
+      tft.drawRoundRect(cursorX + 6, 219, itemWidth - 12, 17, 5, COL_ORANGE_DARK);
     }
 
-    centerText(
-      names[index],
-      index * itemWidth + 32,
-      228,
-      selected ? C_ORANGE : C_MUTED,
-      selected ? C_PANEL2 : C_PANEL,
+    drawCenteredText(
+      pageLabels[index],
+      cursorX + itemWidth / 2,
+      227,
+      selected ? COL_ORANGE : COL_MUTED,
+      selected ? COL_PANEL_ALT : COL_HEADER,
       1
     );
+
+    cursorX += itemWidth;
   }
 }
 
-void statBox(int x, int y, int w, int h, const String& label) {
-  panel(x, y, w, h);
-
-  centerText(
-    label,
-    x + w / 2,
-    y + 11,
-    C_MUTED,
-    C_PANEL,
-    1
-  );
+void drawMetricLabel(const String& label, int x, int y, int width) {
+  drawCenteredText(label, x + width / 2, y, COL_MUTED, COL_PANEL, 1);
 }
 
-// -----------------------------------------------------------------------------
-// Full layouts
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Static page layouts — only drawn when changing pages
+// ============================================================================
 
-void drawHomeLayout() {
-  tft.fillScreen(C_BG);
-  drawHeader("BITCOIN LAB", config.deviceName);
+void drawMinerLayout() {
+  tft.fillScreen(COL_BG);
+  drawHeader("NERD LAB", "LOCAL BENCHMARK • NO POOL");
 
-  panel(8, 42, 304, 67);
-  leftText("LOCAL DOUBLE-SHA256", 18, 50, C_MUTED, C_PANEL, 1);
+  // Main hashrate card.
+  drawPanel(6, 38, 188, 91);
+  drawLeftText("MEASURED HASHRATE", 15, 46, COL_MUTED, COL_PANEL, 1);
+  tft.fillRoundRect(14, 105, 172, 16, 5, COL_ORANGE_DARK);
+  drawCenteredText("DOUBLE-SHA256 • STABLE MODE", 100, 113, COL_TEXT, COL_ORANGE_DARK, 1);
 
-  statBox(8, 118, 96, 88, "SESSION HASHES");
-  statBox(112, 118, 96, 88, "BEST ZERO BITS");
-  statBox(216, 118, 96, 88, "UPTIME");
+  // Right-side live metrics.
+  drawPanel(199, 38, 115, 91);
+  drawLeftText("BLOCK", 207, 45, COL_MUTED, COL_PANEL, 1);
+  drawLeftText("LOCAL SHARES 16B", 207, 73, COL_MUTED, COL_PANEL, 1);
+  drawLeftText("BEST BITS", 207, 101, COL_MUTED, COL_PANEL, 1);
+
+  // Bottom metrics strip.
+  drawPanel(6, 135, 308, 73);
+
+  tft.drawFastVLine(82, 143, 56, COL_BORDER);
+  tft.drawFastVLine(159, 143, 56, COL_BORDER);
+  tft.drawFastVLine(236, 143, 56, COL_BORDER);
+
+  drawMetricLabel("TOTAL HASHES", 8, 148, 72);
+  drawMetricLabel("UPTIME", 85, 148, 72);
+  drawMetricLabel("NONCE", 162, 148, 72);
+  drawMetricLabel("WI-FI", 239, 148, 72);
 
   drawFooter();
 }
 
 void drawMarketLayout() {
-  tft.fillScreen(C_BG);
-  drawHeader("COINBASE BTC-USD", "REAL MARKET DATA");
+  tft.fillScreen(COL_BG);
+  drawHeader("BTC / USD", "COINBASE • 24 HOURLY CANDLES");
 
-  panel(8, 42, 304, 54);
-  leftText("LAST PRICE", 18, 50, C_MUTED, C_PANEL, 1);
+  drawPanel(6, 38, 308, 57);
+  drawLeftText("LAST PRICE", 15, 45, COL_MUTED, COL_PANEL, 1);
+  drawLeftText("24H CHANGE", 223, 45, COL_MUTED, COL_PANEL, 1);
 
-  panel(8, 104, 304, 102);
+  drawPanel(6, 101, 308, 107);
+  drawLeftText("HIGH", 15, 107, COL_MUTED, COL_PANEL, 1);
+  drawLeftText("LOW", 112, 107, COL_MUTED, COL_PANEL, 1);
+  drawLeftText("24 x 1H", 252, 107, COL_MUTED, COL_PANEL, 1);
 
   drawFooter();
 }
 
 void drawNetworkLayout() {
-  tft.fillScreen(C_BG);
-  drawHeader("BITCOIN NETWORK", "MEMPOOL.SPACE");
+  tft.fillScreen(COL_BG);
+  drawHeader("BITCOIN NETWORK", "MEMPOOL.SPACE LIVE DATA");
 
-  statBox(8, 43, 304, 48, "BLOCK HEIGHT");
+  drawPanel(6, 38, 308, 50);
+  drawCenteredText("CURRENT BLOCK HEIGHT", 160, 49, COL_MUTED, COL_PANEL, 1);
 
-  statBox(8, 100, 96, 105, "FASTEST");
-  statBox(112, 100, 96, 105, "30 MIN");
-  statBox(216, 100, 96, 105, "1 HOUR");
+  drawPanel(6, 95, 98, 90);
+  drawPanel(111, 95, 98, 90);
+  drawPanel(216, 95, 98, 90);
 
+  drawCenteredText("FASTEST", 55, 108, COL_MUTED, COL_PANEL, 1);
+  drawCenteredText("30 MIN", 160, 108, COL_MUTED, COL_PANEL, 1);
+  drawCenteredText("1 HOUR", 265, 108, COL_MUTED, COL_PANEL, 1);
+
+  drawPanel(6, 192, 308, 16, COL_PANEL_ALT);
   drawFooter();
 }
 
 void drawDeviceLayout() {
-  tft.fillScreen(C_BG);
-  drawHeader("DEVICE HEALTH", "LIVE DIAGNOSTICS");
+  tft.fillScreen(COL_BG);
+  drawHeader("DEVICE HEALTH", "ESP32-32E TELEMETRY");
 
-  statBox(8, 43, 148, 66, "FREE HEAP");
-  statBox(164, 43, 148, 66, "MIN HEAP");
-  statBox(8, 117, 148, 66, "WI-FI SIGNAL");
-  statBox(164, 117, 148, 66, "CPU");
+  drawPanel(6, 38, 150, 70);
+  drawPanel(164, 38, 150, 70);
+  drawPanel(6, 116, 150, 70);
+  drawPanel(164, 116, 150, 70);
 
-  leftText("Reset:", 14, 191, C_MUTED, C_BG, 1);
-  leftText(resetReasonText(diagnostics.resetReason), 56, 191, C_TEXT, C_BG, 1);
+  drawCenteredText("FREE HEAP", 81, 51, COL_MUTED, COL_PANEL, 1);
+  drawCenteredText("MIN HEAP", 239, 51, COL_MUTED, COL_PANEL, 1);
+  drawCenteredText("CPU / FLASH", 81, 129, COL_MUTED, COL_PANEL, 1);
+  drawCenteredText("LIFETIME", 239, 129, COL_MUTED, COL_PANEL, 1);
 
-  leftText("Reconnects:", 176, 191, C_MUTED, C_BG, 1);
-
+  drawPanel(6, 193, 308, 15, COL_PANEL_ALT);
   drawFooter();
 }
 
-void drawSettingsLayout() {
-  tft.fillScreen(C_BG);
-  drawHeader("SETTINGS", FW_VERSION);
-
-  panel(8, 43, 304, 58);
-  leftText("DEVICE", 18, 52, C_MUTED, C_PANEL, 1);
-  leftText(config.deviceName, 18, 68, C_TEXT, C_PANEL, 2);
-
-  panel(8, 109, 304, 58);
-  leftText("BITCOIN ADDRESS (DISPLAY ONLY)", 18, 118, C_MUTED, C_PANEL, 1);
-  leftText(abbreviatedAddress(config.bitcoinAddress), 18, 135, C_ORANGE, C_PANEL, 2);
-
-  panel(8, 175, 304, 31);
-
-  centerText(
-    config.autoRotate
-      ? "Auto pages: ON / " + String(config.pageSeconds) + " sec"
-      : "Auto pages: OFF",
-    160,
-    190,
-    C_CYAN,
-    C_PANEL,
-    1
-  );
-
-  drawFooter();
-}
-
-void drawCurrentLayout() {
+void drawCurrentPageLayout() {
   switch (currentPage) {
-    case Page::HOME:
-      drawHomeLayout();
-      break;
-
-    case Page::MARKET:
-      drawMarketLayout();
-      break;
-
-    case Page::NETWORK:
-      drawNetworkLayout();
-      break;
-
-    case Page::DEVICE:
-      drawDeviceLayout();
-      break;
-
-    case Page::SETTINGS:
-      drawSettingsLayout();
-      break;
+    case Page::MINER: drawMinerLayout(); break;
+    case Page::MARKET: drawMarketLayout(); break;
+    case Page::NETWORK: drawNetworkLayout(); break;
+    case Page::DEVICE: drawDeviceLayout(); break;
   }
 
-  pageNeedsDraw = false;
+  pageNeedsFullDraw = false;
 }
 
-// -----------------------------------------------------------------------------
-// Number-only updates
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Number-only updates — no full page refresh
+// ============================================================================
 
-void updateHomeValues() {
-  spriteValue(
-    String(smoothKHs, 2),
-    18,
-    65,
-    178,
+void updateMinerValues() {
+  drawValueLeft(
+    String(smoothedHashrateKHs, 2),
+    15,
+    63,
+    125,
     35,
-    C_ORANGE,
-    C_PANEL,
-    4,
-    ML_DATUM
-  );
-
-  spriteValue(
-    "kH/s",
-    204,
-    74,
-    70,
-    25,
-    C_TEXT,
-    C_PANEL,
-    2,
-    ML_DATUM
-  );
-
-  spriteValue(
-    compactNumber(sessionHashes),
-    17,
-    145,
-    78,
-    42,
-    C_TEXT,
-    C_PANEL,
-    2
-  );
-
-  spriteValue(
-    String(sessionBestZeroBits),
-    121,
-    145,
-    78,
-    42,
-    C_YELLOW,
-    C_PANEL,
+    COL_ORANGE,
+    COL_PANEL,
     4
   );
 
-  spriteValue(
-    uptimeText((millis() - bootMs) / 1000ULL),
-    225,
-    145,
-    78,
-    42,
-    C_CYAN,
-    C_PANEL,
+  drawValueLeft("kH/s", 143, 72, 43, 24, COL_TEXT, COL_PANEL, 2);
+
+  drawValueLeft(
+    network.heightValid ? String(network.blockHeight) : "--",
+    207,
+    55,
+    98,
+    16,
+    COL_PURPLE,
+    COL_PANEL,
     2
+  );
+
+  drawValueLeft(
+    compactNumber(totalLocalSharesAllTime()),
+    207,
+    83,
+    98,
+    16,
+    COL_GREEN,
+    COL_PANEL,
+    2
+  );
+
+  drawValueLeft(
+    String(bestBitsAllTime()),
+    207,
+    111,
+    98,
+    15,
+    COL_YELLOW,
+    COL_PANEL,
+    2
+  );
+
+  drawValueCentered(
+    compactNumber(totalHashesAllTime()),
+    10,
+    164,
+    68,
+    30,
+    COL_TEXT,
+    COL_PANEL,
+    2
+  );
+
+  drawValueCentered(
+    uptimeText((millis() - bootMillis) / 1000ULL),
+    87,
+    164,
+    68,
+    30,
+    COL_CYAN,
+    COL_PANEL,
+    1
+  );
+
+  drawValueCentered(
+    nonceText(currentNonce),
+    164,
+    164,
+    68,
+    30,
+    COL_ORANGE,
+    COL_PANEL,
+    1
+  );
+
+  drawValueCentered(
+    WiFi.status() == WL_CONNECTED ? String(WiFi.RSSI()) + " dBm" : "OFF",
+    241,
+    164,
+    68,
+    30,
+    WiFi.status() == WL_CONNECTED ? COL_GREEN : COL_RED,
+    COL_PANEL,
+    1
   );
 }
 
-void updateMarketValues() {
-  if (market.tickerValid) {
-    spriteValue(
-      "$" + String(market.price, 2),
-      18,
-      65,
-      190,
-      24,
-      C_ORANGE,
-      C_PANEL,
-      4,
-      ML_DATUM
-    );
-  } else {
-    spriteValue(
-      "Unavailable",
-      18,
-      65,
-      190,
-      24,
-      C_RED,
-      C_PANEL,
-      2,
-      ML_DATUM
-    );
-  }
+void updateMarketHeaderValues() {
+  drawValueLeft(
+    market.tickerValid ? "$" + String(market.price, 2) : "UNAVAILABLE",
+    15,
+    56,
+    196,
+    31,
+    market.tickerValid ? COL_ORANGE : COL_RED,
+    COL_PANEL,
+    market.tickerValid ? 4 : 2
+  );
 
-  uint16_t changeColor =
-      market.change24h >= 0 ? C_GREEN : C_RED;
+  String changeText = market.statsValid
+    ? String(market.change24h >= 0 ? "+" : "") + String(market.change24h, 2) + "%"
+    : "--";
 
-  String changeText =
-      market.statsValid
-      ? String(market.change24h >= 0 ? "+" : "") +
-        String(market.change24h, 2) + "%"
-      : "--";
-
-  spriteValue(
+  drawValueCentered(
     changeText,
-    222,
-    62,
-    80,
-    28,
-    changeColor,
-    C_PANEL,
+    223,
+    57,
+    82,
+    29,
+    market.change24h >= 0 ? COL_GREEN : COL_RED,
+    COL_PANEL,
     2
   );
 }
 
 void updateNetworkValues() {
-  spriteValue(
+  drawValueCentered(
     network.heightValid ? String(network.blockHeight) : "--",
     20,
-    66,
+    61,
     280,
-    18,
-    C_PURPLE,
-    C_PANEL,
+    22,
+    COL_PURPLE,
+    COL_PANEL,
     2
   );
 
-  spriteValue(
+  drawValueCentered(
     network.feesValid ? String(network.fastestFee) : "--",
-    17,
-    130,
-    78,
-    42,
-    C_ORANGE,
-    C_PANEL,
+    18,
+    125,
+    74,
+    38,
+    COL_ORANGE,
+    COL_PANEL,
     4
   );
+  drawValueCentered("sat/vB", 18, 163, 74, 14, COL_MUTED, COL_PANEL, 1);
 
-  spriteValue(
-    "sat/vB",
-    17,
-    175,
-    78,
-    16,
-    C_MUTED,
-    C_PANEL,
-    1
-  );
-
-  spriteValue(
+  drawValueCentered(
     network.feesValid ? String(network.halfHourFee) : "--",
-    121,
-    130,
-    78,
-    42,
-    C_YELLOW,
-    C_PANEL,
+    123,
+    125,
+    74,
+    38,
+    COL_YELLOW,
+    COL_PANEL,
     4
   );
+  drawValueCentered("sat/vB", 123, 163, 74, 14, COL_MUTED, COL_PANEL, 1);
 
-  spriteValue(
-    "sat/vB",
-    121,
-    175,
-    78,
-    16,
-    C_MUTED,
-    C_PANEL,
-    1
-  );
-
-  spriteValue(
+  drawValueCentered(
     network.feesValid ? String(network.hourFee) : "--",
-    225,
-    130,
-    78,
-    42,
-    C_CYAN,
-    C_PANEL,
+    228,
+    125,
+    74,
+    38,
+    COL_CYAN,
+    COL_PANEL,
     4
   );
+  drawValueCentered("sat/vB", 228, 163, 74, 14, COL_MUTED, COL_PANEL, 1);
 
-  spriteValue(
-    "sat/vB",
-    225,
-    175,
-    78,
-    16,
-    C_MUTED,
-    C_PANEL,
-    1
-  );
+  String statusText = network.status;
+  if (WiFi.status() == WL_CONNECTED) {
+    statusText += "  •  WI-FI " + String(WiFi.RSSI()) + " dBm";
+  }
+
+  drawValueCentered(statusText, 12, 193, 296, 13, COL_MUTED, COL_PANEL_ALT, 1);
 }
 
 void updateDeviceValues() {
-  diagnostics.minFreeHeap =
-      min(diagnostics.minFreeHeap, ESP.getFreeHeap());
+  diagnostics.minimumFreeHeap = min(diagnostics.minimumFreeHeap, ESP.getFreeHeap());
 
-  spriteValue(
+  drawValueCentered(
     compactNumber(ESP.getFreeHeap()),
     18,
-    70,
-    128,
-    28,
-    C_CYAN,
-    C_PANEL,
+    67,
+    126,
+    29,
+    COL_CYAN,
+    COL_PANEL,
     2
   );
 
-  spriteValue(
-    compactNumber(diagnostics.minFreeHeap),
-    174,
-    70,
-    128,
-    28,
-    C_YELLOW,
-    C_PANEL,
+  drawValueCentered(
+    compactNumber(diagnostics.minimumFreeHeap),
+    176,
+    67,
+    126,
+    29,
+    COL_YELLOW,
+    COL_PANEL,
     2
   );
 
-  spriteValue(
-    WiFi.status() == WL_CONNECTED
-      ? String(WiFi.RSSI()) + " dBm"
-      : "Offline",
-    18,
-    144,
-    128,
-    28,
-    WiFi.status() == WL_CONNECTED ? C_GREEN : C_RED,
-    C_PANEL,
-    2
-  );
-
-  spriteValue(
+  drawValueCentered(
     String(ESP.getCpuFreqMHz()) + " MHz",
-    174,
-    144,
-    128,
-    28,
-    C_ORANGE,
-    C_PANEL,
+    18,
+    143,
+    126,
+    22,
+    COL_ORANGE,
+    COL_PANEL,
     2
   );
 
-  spriteValue(
-    String(diagnostics.wifiReconnects),
-    249,
-    186,
-    54,
-    15,
-    C_TEXT,
-    C_BG,
+  drawValueCentered(
+    String(ESP.getFlashChipSize() / 1024UL / 1024UL) + " MB FLASH",
+    18,
+    166,
+    126,
+    14,
+    COL_MUTED,
+    COL_PANEL,
+    1
+  );
+
+  drawValueCentered(
+    compactNumber(totalHashesAllTime()),
+    176,
+    143,
+    126,
+    22,
+    COL_TEXT,
+    COL_PANEL,
+    2
+  );
+
+  drawValueCentered(
+    "BOOTS " + String(lifetime.bootCount) + "  •  " + uptimeText(
+      lifetime.runtimeBeforeBoot + ((millis() - bootMillis) / 1000ULL)
+    ),
+    176,
+    166,
+    126,
+    14,
+    COL_MUTED,
+    COL_PANEL,
+    1
+  );
+
+  drawValueCentered(
+    "RESET " + resetReasonText(diagnostics.resetReason) +
+    "  •  API ERR " + String(diagnostics.apiFailureCount),
+    12,
+    194,
+    296,
+    13,
+    COL_MUTED,
+    COL_PANEL_ALT,
     1
   );
 }
 
-void updateCurrentValues() {
+void updateCurrentPageValues() {
   switch (currentPage) {
-    case Page::HOME:
-      updateHomeValues();
-      break;
-
-    case Page::MARKET:
-      updateMarketValues();
-      break;
-
-    case Page::NETWORK:
-      updateNetworkValues();
-      break;
-
-    case Page::DEVICE:
-      updateDeviceValues();
-      break;
-
-    case Page::SETTINGS:
-      break;
+    case Page::MINER: updateMinerValues(); break;
+    case Page::MARKET: updateMarketHeaderValues(); break;
+    case Page::NETWORK: updateNetworkValues(); break;
+    case Page::DEVICE: updateDeviceValues(); break;
   }
 }
 
-// -----------------------------------------------------------------------------
-// Real candlestick chart
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Market chart: hourly candles + close line + volume bars
+// ============================================================================
 
-void drawRealCandles() {
-  int chartX = 17;
-  int chartY = 118;
-  int chartW = 286;
-  int chartH = 78;
+void drawMarketChart() {
+  // Everything stays safely inside the market chart panel.
+  static constexpr int CHART_X = 14;
+  static constexpr int CHART_Y = 119;
+  static constexpr int CHART_W = 292;
+  static constexpr int CHART_H = 81;
+  static constexpr int PRICE_H = 60;
+  static constexpr int VOLUME_Y = CHART_Y + 63;
+  static constexpr int VOLUME_H = 9;
 
-  tft.fillRect(chartX, chartY, chartW, chartH, C_PANEL);
+  tft.fillRect(CHART_X, CHART_Y, CHART_W, CHART_H, COL_PANEL);
+
+  drawValueLeft(
+    market.statsValid ? "$" + String(market.high24h, 0) : "--",
+    48,
+    105,
+    58,
+    12,
+    COL_GREEN,
+    COL_PANEL,
+    1
+  );
+
+  drawValueLeft(
+    market.statsValid ? "$" + String(market.low24h, 0) : "--",
+    142,
+    105,
+    58,
+    12,
+    COL_RED,
+    COL_PANEL,
+    1
+  );
 
   if (!market.candlesValid || market.candleCount < 2) {
-    centerText(
-      market.error,
-      160,
-      157,
-      C_MUTED,
-      C_PANEL,
+    drawCenteredText(
+      market.chartStatus,
+      CHART_X + CHART_W / 2,
+      CHART_Y + CHART_H / 2,
+      COL_MUTED,
+      COL_PANEL,
       1
     );
+    chartNeedsDraw = false;
     return;
   }
 
-  float minimum = market.candles[0].low;
-  float maximum = market.candles[0].high;
+  float minimumPrice = market.candles[0].low;
+  float maximumPrice = market.candles[0].high;
+  float maximumVolume = market.candles[0].volume;
 
   for (uint8_t index = 1; index < market.candleCount; index++) {
-    minimum = min(minimum, market.candles[index].low);
-    maximum = max(maximum, market.candles[index].high);
+    minimumPrice = min(minimumPrice, market.candles[index].low);
+    maximumPrice = max(maximumPrice, market.candles[index].high);
+    maximumVolume = max(maximumVolume, market.candles[index].volume);
   }
 
-  float range = maximum - minimum;
-  if (range < 1.0f) {
-    range = 1.0f;
+  float priceRange = maximumPrice - minimumPrice;
+  if (priceRange < 1.0f) {
+    priceRange = 1.0f;
+  }
+  if (maximumVolume < 0.0001f) {
+    maximumVolume = 1.0f;
   }
 
-  for (int line = 1; line < 4; line++) {
-    int y = chartY + line * chartH / 4;
-    tft.drawFastHLine(chartX, y, chartW, C_PANEL2);
+  auto priceToY = [&](float price) -> int {
+    float normalized = (price - minimumPrice) / priceRange;
+    return CHART_Y + PRICE_H - 4 - static_cast<int>(normalized * (PRICE_H - 8));
+  };
+
+  // Subtle grid.
+  for (int row = 1; row < 4; row++) {
+    int gridY = CHART_Y + row * PRICE_H / 4;
+    tft.drawFastHLine(CHART_X, gridY, CHART_W, COL_GRID);
   }
 
-  int spacing = chartW / market.candleCount;
-  int bodyWidth = max(4, spacing / 2);
+  for (int column = 1; column < 6; column++) {
+    int gridX = CHART_X + column * CHART_W / 6;
+    tft.drawFastVLine(gridX, CHART_Y, PRICE_H, COL_GRID);
+  }
 
+  int spacing = CHART_W / market.candleCount;
+  int candleBodyWidth = max(3, spacing / 2);
+
+  // Volume bars and candlesticks.
   for (uint8_t index = 0; index < market.candleCount; index++) {
     const Candle& candle = market.candles[index];
 
-    auto priceY = [&](float price) {
-      return chartY + chartH - 4 -
-             static_cast<int>(
-               ((price - minimum) / range) *
-               (chartH - 8)
-             );
-    };
+    int centerX = CHART_X + index * spacing + spacing / 2;
+    int highY = priceToY(candle.high);
+    int lowY = priceToY(candle.low);
+    int openY = priceToY(candle.open);
+    int closeY = priceToY(candle.close);
 
-    int centerX =
-        chartX + index * spacing + spacing / 2;
-
-    int highY = priceY(candle.high);
-    int lowY = priceY(candle.low);
-    int openY = priceY(candle.open);
-    int closeY = priceY(candle.close);
-
-    uint16_t color =
-        candle.close >= candle.open
-        ? C_GREEN
-        : C_RED;
+    uint16_t candleColor = candle.close >= candle.open ? COL_GREEN : COL_RED;
 
     tft.drawFastVLine(
       centerX,
       highY,
-      max(1, lowY - highY),
-      color
+      max(1, lowY - highY + 1),
+      candleColor
     );
 
     int bodyTop = min(openY, closeY);
-    int bodyHeight = max(3, abs(closeY - openY));
+    int bodyHeight = max(2, abs(closeY - openY));
 
     tft.fillRect(
-      centerX - bodyWidth / 2,
+      centerX - candleBodyWidth / 2,
       bodyTop,
-      bodyWidth,
+      candleBodyWidth,
       bodyHeight,
-      color
+      candleColor
+    );
+
+    int volumeHeight = static_cast<int>((candle.volume / maximumVolume) * VOLUME_H);
+    volumeHeight = constrain(volumeHeight, 1, VOLUME_H);
+
+    tft.fillRect(
+      centerX - candleBodyWidth / 2,
+      VOLUME_Y + VOLUME_H - volumeHeight,
+      candleBodyWidth,
+      volumeHeight,
+      candleColor
     );
   }
 
-  marketChartNeedsDraw = false;
+  // Close-price line drawn over the candles.
+  for (uint8_t index = 1; index < market.candleCount; index++) {
+    int previousX = CHART_X + (index - 1) * spacing + spacing / 2;
+    int currentX = CHART_X + index * spacing + spacing / 2;
+    int previousY = priceToY(market.candles[index - 1].close);
+    int currentY = priceToY(market.candles[index].close);
+
+    tft.drawLine(previousX, previousY, currentX, currentY, COL_CYAN);
+  }
+
+  // Current price reference line.
+  if (market.tickerValid &&
+      market.price >= minimumPrice &&
+      market.price <= maximumPrice) {
+    int currentPriceY = priceToY(market.price);
+
+    for (int dashX = CHART_X; dashX < CHART_X + CHART_W; dashX += 8) {
+      tft.drawFastHLine(dashX, currentPriceY, 4, COL_YELLOW);
+    }
+  }
+
+  // Clean range labels and time labels.
+  tft.fillRect(CHART_X + 2, CHART_Y + 2, 61, 10, COL_PANEL);
+  drawLeftText("$" + String(maximumPrice, 0), CHART_X + 3, CHART_Y + 2, COL_MUTED, COL_PANEL, 1);
+
+  tft.fillRect(CHART_X + 2, CHART_Y + PRICE_H - 11, 61, 10, COL_PANEL);
+  drawLeftText("$" + String(minimumPrice, 0), CHART_X + 3, CHART_Y + PRICE_H - 11, COL_MUTED, COL_PANEL, 1);
+
+  drawLeftText("-24H", CHART_X + 2, CHART_Y + 73, COL_MUTED, COL_PANEL, 1);
+  drawCenteredText("-12H", CHART_X + CHART_W / 2, CHART_Y + 77, COL_MUTED, COL_PANEL, 1);
+  drawCenteredText("NOW", CHART_X + CHART_W - 15, CHART_Y + 77, COL_MUTED, COL_PANEL, 1);
+
+  chartNeedsDraw = false;
 }
 
-// -----------------------------------------------------------------------------
-// Wi-Fi portal
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Wi-Fi setup portal
+// ============================================================================
 
-void savePortalCallback() {
-  savePortalConfig = true;
+void portalSaveCallback() {
+  portalSaveRequested = true;
 }
 
 void configureWifi() {
-  snprintf(
-    portalDeviceName,
-    sizeof(portalDeviceName),
-    "%s",
-    config.deviceName.c_str()
-  );
+  snprintf(portalDeviceName, sizeof(portalDeviceName), "%s", config.deviceName.c_str());
+  snprintf(portalBitcoinAddress, sizeof(portalBitcoinAddress), "%s", config.bitcoinAddress.c_str());
+  snprintf(portalUtcOffset, sizeof(portalUtcOffset), "%d", config.utcOffsetHours);
+  snprintf(portalAutoRotate, sizeof(portalAutoRotate), "%d", config.autoRotate ? 1 : 0);
+  snprintf(portalPageSeconds, sizeof(portalPageSeconds), "%u", config.pageSeconds);
 
-  snprintf(
-    portalBitcoinAddress,
-    sizeof(portalBitcoinAddress),
-    "%s",
-    config.bitcoinAddress.c_str()
-  );
-
-  snprintf(
-    portalUtcOffset,
-    sizeof(portalUtcOffset),
-    "%d",
-    config.utcOffsetHours
-  );
-
-  snprintf(
-    portalAutoRotate,
-    sizeof(portalAutoRotate),
-    "%d",
-    config.autoRotate ? 1 : 0
-  );
-
-  snprintf(
-    portalPageSeconds,
-    sizeof(portalPageSeconds),
-    "%u",
-    config.pageSeconds
-  );
-
-  tft.fillScreen(C_BG);
+  tft.fillScreen(COL_BG);
   drawHeader("WI-FI SETUP", "CONNECT AND CONFIGURE");
 
-  panel(12, 48, 296, 52);
-  centerText("Join this temporary network:", 160, 62, C_MUTED, C_PANEL, 1);
-  centerText(AP_NAME, 160, 82, C_ORANGE, C_PANEL, 2);
+  drawPanel(12, 48, 296, 52);
+  drawCenteredText("JOIN TEMPORARY NETWORK", 160, 61, COL_MUTED, COL_PANEL, 1);
+  drawCenteredText(SETUP_AP_NAME, 160, 82, COL_ORANGE, COL_PANEL, 2);
 
-  panel(12, 109, 296, 58);
-
-  centerText(
-    String("Password: ") + AP_PASSWORD,
+  drawPanel(12, 109, 296, 58);
+  drawCenteredText(
+    String("PASSWORD: ") + SETUP_AP_PASSWORD,
     160,
     127,
-    C_TEXT,
-    C_PANEL,
+    COL_TEXT,
+    COL_PANEL,
     2
   );
+  drawCenteredText("OPEN 192.168.4.1 IF NEEDED", 160, 151, COL_CYAN, COL_PANEL, 1);
 
-  centerText(
-    "Open 192.168.4.1 if needed",
-    160,
-    151,
-    C_CYAN,
-    C_PANEL,
-    1
-  );
+  drawPanel(12, 176, 296, 30, COL_PANEL_ALT);
+  drawCenteredText("DASHBOARD WAITS UNTIL WI-FI CONNECTS", 160, 191, COL_YELLOW, COL_PANEL_ALT, 1);
 
   WiFiManager manager;
 
-  WiFiManagerParameter pDeviceName(
+  WiFiManagerParameter deviceNameParameter(
     "deviceName",
     "Device name",
     portalDeviceName,
     24
   );
 
-  WiFiManagerParameter pBitcoinAddress(
+  WiFiManagerParameter bitcoinAddressParameter(
     "bitcoinAddress",
     "Bitcoin address (optional, display only)",
     portalBitcoinAddress,
     90
   );
 
-  WiFiManagerParameter pUtcOffset(
+  WiFiManagerParameter utcOffsetParameter(
     "utcOffset",
     "UTC offset hours",
     portalUtcOffset,
     4
   );
 
-  WiFiManagerParameter pAutoRotate(
+  WiFiManagerParameter autoRotateParameter(
     "autoRotate",
     "Auto rotate pages: 1=yes, 0=no",
     portalAutoRotate,
     1
   );
 
-  WiFiManagerParameter pPageSeconds(
+  WiFiManagerParameter pageSecondsParameter(
     "pageSeconds",
     "Seconds per page (5-60)",
     portalPageSeconds,
     3
   );
 
-  manager.addParameter(&pDeviceName);
-  manager.addParameter(&pBitcoinAddress);
-  manager.addParameter(&pUtcOffset);
-  manager.addParameter(&pAutoRotate);
-  manager.addParameter(&pPageSeconds);
+  manager.addParameter(&deviceNameParameter);
+  manager.addParameter(&bitcoinAddressParameter);
+  manager.addParameter(&utcOffsetParameter);
+  manager.addParameter(&autoRotateParameter);
+  manager.addParameter(&pageSecondsParameter);
 
-  manager.setSaveConfigCallback(savePortalCallback);
+  manager.setSaveConfigCallback(portalSaveCallback);
   manager.setTitle("CYD Bitcoin Lab Setup");
   manager.setClass("invert");
   manager.setConnectTimeout(30);
   manager.setConfigPortalTimeout(240);
 
-  bool connected =
-      manager.autoConnect(AP_NAME, AP_PASSWORD);
+  bool connected = manager.autoConnect(SETUP_AP_NAME, SETUP_AP_PASSWORD);
 
   if (!connected) {
-    tft.fillScreen(C_BG);
-
-    centerText(
-      "WI-FI SETUP FAILED",
-      160,
-      105,
-      C_RED,
-      C_BG,
-      4
-    );
-
+    tft.fillScreen(COL_BG);
+    drawCenteredText("WI-FI SETUP FAILED", 160, 105, COL_RED, COL_BG, 4);
+    drawCenteredText("RESTARTING", 160, 139, COL_MUTED, COL_BG, 2);
     delay(2500);
     ESP.restart();
   }
 
-  if (savePortalConfig) {
-    config.deviceName = pDeviceName.getValue();
-    config.bitcoinAddress = pBitcoinAddress.getValue();
-    config.utcOffsetHours = atoi(pUtcOffset.getValue());
-    config.autoRotate = atoi(pAutoRotate.getValue()) != 0;
-    config.pageSeconds =
-        constrain(atoi(pPageSeconds.getValue()), 5, 60);
+  if (portalSaveRequested) {
+    config.deviceName = deviceNameParameter.getValue();
+    config.bitcoinAddress = bitcoinAddressParameter.getValue();
+    config.utcOffsetHours = atoi(utcOffsetParameter.getValue());
+    config.autoRotate = atoi(autoRotateParameter.getValue()) != 0;
+    config.pageSeconds = constrain(atoi(pageSecondsParameter.getValue()), 5, 60);
 
     config.deviceName.trim();
     config.bitcoinAddress.trim();
 
-    if (config.deviceName.length() == 0) {
+    if (config.deviceName.isEmpty()) {
       config.deviceName = "ORANGE NODE";
     }
 
     saveConfiguration();
   }
 
-  tft.fillScreen(C_BG);
-
-  centerText(
-    "WI-FI CONNECTED",
-    160,
-    98,
-    C_GREEN,
-    C_BG,
-    4
-  );
-
-  centerText(WiFi.SSID(), 160, 135, C_TEXT, C_BG, 2);
-  centerText(WiFi.localIP().toString(), 160, 161, C_CYAN, C_BG, 2);
-
+  tft.fillScreen(COL_BG);
+  drawCenteredText("WI-FI CONNECTED", 160, 99, COL_GREEN, COL_BG, 4);
+  drawCenteredText(WiFi.SSID(), 160, 136, COL_TEXT, COL_BG, 2);
+  drawCenteredText(WiFi.localIP().toString(), 160, 162, COL_CYAN, COL_BG, 2);
   delay(1200);
 }
 
-void reopenConfiguration() {
+void reopenWifiSetup() {
   saveLifetimeStats();
 
-  tft.fillScreen(C_BG);
-  centerText("OPENING SETUP", 160, 105, C_ORANGE, C_BG, 4);
+  tft.fillScreen(COL_BG);
+  drawCenteredText("OPENING WI-FI SETUP", 160, 105, COL_ORANGE, COL_BG, 4);
 
   WiFiManager manager;
   manager.resetSettings();
@@ -1191,25 +1230,18 @@ void reopenConfiguration() {
   ESP.restart();
 }
 
-// -----------------------------------------------------------------------------
-// Clock
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Clock and HTTPS
+// ============================================================================
 
 void configureClock() {
-  long utcOffsetSeconds =
-      static_cast<long>(config.utcOffsetHours) * 3600L;
-
-  configTime(
-    utcOffsetSeconds,
-    0,
-    "pool.ntp.org",
-    "time.cloudflare.com"
-  );
+  long utcOffsetSeconds = static_cast<long>(config.utcOffsetHours) * 3600L;
+  configTime(utcOffsetSeconds, 0, "pool.ntp.org", "time.cloudflare.com");
 }
 
-// -----------------------------------------------------------------------------
-// HTTPS
-// -----------------------------------------------------------------------------
+bool clockReady() {
+  return time(nullptr) > 100000;
+}
 
 bool secureGet(const String& url, String& response) {
   if (WiFi.status() != WL_CONNECTED) {
@@ -1220,8 +1252,9 @@ bool secureGet(const String& url, String& response) {
   client.setInsecure();
 
   HTTPClient http;
-  http.setTimeout(12000);
-  http.setUserAgent(String("CYD-Bitcoin-Lab/") + FW_VERSION);
+  http.setTimeout(9000);
+  http.useHTTP10(true);
+  http.setUserAgent(String("CYD-Bitcoin-Lab/") + FIRMWARE_VERSION);
 
   if (!http.begin(client, url)) {
     return false;
@@ -1236,42 +1269,48 @@ bool secureGet(const String& url, String& response) {
 
   response = http.getString();
   http.end();
-
   return true;
 }
 
-// -----------------------------------------------------------------------------
-// Coinbase
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Coinbase requests
+// ============================================================================
 
 bool fetchCoinbaseTicker() {
+  lastTickerRefresh = millis();
   String response;
 
   if (!secureGet(
         "https://api.exchange.coinbase.com/products/BTC-USD/ticker",
         response
       )) {
-    market.error = "Coinbase ticker failed";
+    market.tickerValid = false;
+    market.tickerStatus = "TICKER ERROR";
+    diagnostics.apiFailureCount++;
     return false;
   }
 
-  DynamicJsonDocument document(2048);
+  JsonDocument document;
+  DeserializationError error = deserializeJson(document, response);
 
-  if (deserializeJson(document, response)) {
-    market.error = "Ticker JSON error";
+  if (error) {
+    market.tickerValid = false;
+    market.tickerStatus = "TICKER JSON";
+    diagnostics.apiFailureCount++;
     return false;
   }
 
-  market.price =
-      String(document["price"] | "0").toFloat();
-
-  market.bid =
-      String(document["bid"] | "0").toFloat();
-
-  market.ask =
-      String(document["ask"] | "0").toFloat();
-
+  market.price = String(document["price"] | "0").toFloat();
+  market.bid = String(document["bid"] | "0").toFloat();
+  market.ask = String(document["ask"] | "0").toFloat();
   market.tickerValid = market.price > 0;
+  market.tickerStatus = market.tickerValid ? "LIVE" : "NO PRICE";
+
+  lastTickerRefresh = millis();
+
+  if (currentPage == Page::MARKET) {
+    updateMarketHeaderValues();
+  }
 
   return market.tickerValid;
 }
@@ -1283,206 +1322,189 @@ bool fetchCoinbaseStats() {
         "https://api.exchange.coinbase.com/products/BTC-USD/stats",
         response
       )) {
-    market.error = "Coinbase stats failed";
+    market.statsValid = false;
+    diagnostics.apiFailureCount++;
     return false;
   }
 
-  DynamicJsonDocument document(3072);
+  JsonDocument document;
+  DeserializationError error = deserializeJson(document, response);
 
-  if (deserializeJson(document, response)) {
-    market.error = "Stats JSON error";
+  if (error) {
+    market.statsValid = false;
+    diagnostics.apiFailureCount++;
     return false;
   }
 
-  market.open24h =
-      String(document["open"] | "0").toFloat();
-
-  market.high24h =
-      String(document["high"] | "0").toFloat();
-
-  market.low24h =
-      String(document["low"] | "0").toFloat();
-
-  market.volume24h =
-      String(document["volume"] | "0").toFloat();
+  market.open24h = String(document["open"] | "0").toFloat();
+  market.high24h = String(document["high"] | "0").toFloat();
+  market.low24h = String(document["low"] | "0").toFloat();
+  market.volume24h = String(document["volume"] | "0").toFloat();
 
   if (market.open24h > 0 && market.price > 0) {
-    market.change24h =
-        ((market.price - market.open24h) /
-         market.open24h) *
-        100.0f;
-
+    market.change24h = ((market.price - market.open24h) / market.open24h) * 100.0f;
     market.statsValid = true;
+  } else {
+    market.statsValid = false;
+  }
+
+  if (currentPage == Page::MARKET) {
+    updateMarketHeaderValues();
   }
 
   return market.statsValid;
 }
 
-bool fetchCoinbaseCandles() {
-  time_t now = time(nullptr);
+bool fetchCoinbaseHourlyCandles() {
+  lastMarketRefresh = millis();
 
-  if (now < 100000) {
-    market.error = "Clock not ready";
+  if (!clockReady()) {
+    market.candlesValid = false;
+    market.chartStatus = "WAITING FOR CLOCK";
     return false;
   }
 
-  time_t startTime =
-      now - static_cast<time_t>(MAX_CANDLES) * 86400L;
+  time_t endTime = time(nullptr);
+  time_t startTime = endTime - 24L * 60L * 60L;
 
   String url =
-      "https://api.exchange.coinbase.com/products/BTC-USD/candles"
-      "?granularity=86400"
-      "&start=" + isoUtcTime(startTime) +
-      "&end=" + isoUtcTime(now);
+    "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+    "?granularity=3600"
+    "&start=" + isoUtcTime(startTime) +
+    "&end=" + isoUtcTime(endTime);
 
   String response;
 
   if (!secureGet(url, response)) {
-    market.error = "Coinbase candles failed";
+    market.candlesValid = false;
+    market.chartStatus = "CANDLE API ERROR";
+    diagnostics.apiFailureCount++;
     return false;
   }
 
-  DynamicJsonDocument document(12288);
+  JsonDocument document;
+  DeserializationError error = deserializeJson(document, response);
 
-  if (deserializeJson(document, response) ||
-      !document.is<JsonArray>()) {
-    market.error = "Candle JSON error";
+  if (error || !document.is<JsonArray>()) {
+    market.candlesValid = false;
+    market.chartStatus = "CANDLE JSON ERROR";
+    diagnostics.apiFailureCount++;
     return false;
   }
 
   JsonArray rows = document.as<JsonArray>();
-
-  uint8_t available =
-      min(
-        static_cast<int>(rows.size()),
-        static_cast<int>(MAX_CANDLES)
-      );
-
+  int availableRows = min(static_cast<int>(rows.size()), static_cast<int>(CHART_CANDLE_COUNT));
   market.candleCount = 0;
 
-  for (int destination = 0;
-       destination < available;
-       destination++) {
-
-    int sourceIndex =
-        available - 1 - destination;
-
-    JsonArray row =
-        rows[sourceIndex].as<JsonArray>();
+  // Coinbase returns newest first. Reverse for oldest-to-newest charting.
+  for (int destination = 0; destination < availableRows; destination++) {
+    int sourceIndex = availableRows - 1 - destination;
+    JsonArray row = rows[sourceIndex].as<JsonArray>();
 
     if (row.size() < 5) {
       continue;
     }
 
-    Candle& candle =
-        market.candles[market.candleCount++];
-
+    Candle& candle = market.candles[market.candleCount++];
     candle.timestamp = row[0] | 0;
     candle.low = row[1] | 0.0f;
     candle.high = row[2] | 0.0f;
     candle.open = row[3] | 0.0f;
     candle.close = row[4] | 0.0f;
-    candle.volume =
-        row.size() > 5
-        ? row[5].as<float>()
-        : 0.0f;
+    candle.volume = row.size() > 5 ? row[5].as<float>() : 0.0f;
   }
 
-  market.candlesValid =
-      market.candleCount >= 2;
+  market.candlesValid = market.candleCount >= 2;
+  market.chartStatus = market.candlesValid ? "LIVE 24H" : "NO CANDLE DATA";
+  chartNeedsDraw = true;
+
+  if (currentPage == Page::MARKET) {
+    drawMarketChart();
+  }
 
   return market.candlesValid;
 }
 
-void fetchMarketData() {
-  bool tickerOk = fetchCoinbaseTicker();
-  bool statsOk = fetchCoinbaseStats();
-  bool candlesOk = fetchCoinbaseCandles();
+// ============================================================================
+// mempool.space requests
+// ============================================================================
 
-  if (tickerOk || statsOk || candlesOk) {
-    market.lastSuccessEpoch =
-        static_cast<uint32_t>(time(nullptr));
-
-    market.error = "";
+void updateNetworkStatus() {
+  if (network.heightValid && network.feesValid) {
+    network.status = "API LIVE";
+  } else if (network.heightValid || network.feesValid) {
+    network.status = "PARTIAL DATA";
   } else {
-    diagnostics.marketFailures++;
-  }
-
-  lastMarketMs = millis();
-  marketChartNeedsDraw = true;
-
-  if (currentPage == Page::MARKET) {
-    updateMarketValues();
-    drawRealCandles();
+    network.status = "API ERROR";
   }
 }
 
-// -----------------------------------------------------------------------------
-// mempool.space
-// -----------------------------------------------------------------------------
-
-void fetchNetworkData() {
-  bool anySuccess = false;
+bool fetchBlockHeight() {
   String response;
 
-  if (secureGet(
-        "https://mempool.space/api/blocks/tip/height",
-        response
-      )) {
-    response.trim();
-
-    network.blockHeight =
-        static_cast<uint32_t>(response.toInt());
-
-    network.heightValid =
-        network.blockHeight > 0;
-
-    anySuccess |= network.heightValid;
+  if (!secureGet("https://mempool.space/api/blocks/tip/height", response)) {
+    network.heightValid = false;
+    diagnostics.apiFailureCount++;
+    updateNetworkStatus();
+    return false;
   }
 
-  response = "";
+  response.trim();
+  network.blockHeight = static_cast<uint32_t>(response.toInt());
+  network.heightValid = network.blockHeight > 0;
 
-  if (secureGet(
-        "https://mempool.space/api/v1/fees/recommended",
-        response
-      )) {
-    DynamicJsonDocument document(2048);
-
-    if (!deserializeJson(document, response)) {
-      network.fastestFee =
-          document["fastestFee"] | 0;
-
-      network.halfHourFee =
-          document["halfHourFee"] | 0;
-
-      network.hourFee =
-          document["hourFee"] | 0;
-
-      network.feesValid = true;
-      anySuccess = true;
-    }
+  if (!network.heightValid) {
+    diagnostics.apiFailureCount++;
   }
 
-  if (anySuccess) {
-    network.lastSuccessEpoch =
-        static_cast<uint32_t>(time(nullptr));
-
-    network.error = "";
-  } else {
-    diagnostics.networkFailures++;
-    network.error = "Network API failed";
-  }
-
-  lastNetworkMs = millis();
+  updateNetworkStatus();
 
   if (currentPage == Page::NETWORK) {
     updateNetworkValues();
   }
+  if (currentPage == Page::MINER) {
+    updateMinerValues();
+  }
+
+  return network.heightValid;
 }
 
-// -----------------------------------------------------------------------------
-// Local double-SHA256 benchmark
-// -----------------------------------------------------------------------------
+bool fetchRecommendedFees() {
+  String response;
+
+  if (!secureGet("https://mempool.space/api/v1/fees/recommended", response)) {
+    network.feesValid = false;
+    diagnostics.apiFailureCount++;
+    updateNetworkStatus();
+    return false;
+  }
+
+  JsonDocument document;
+  DeserializationError error = deserializeJson(document, response);
+
+  if (error) {
+    network.feesValid = false;
+    diagnostics.apiFailureCount++;
+    updateNetworkStatus();
+    return false;
+  }
+
+  network.fastestFee = document["fastestFee"] | 0;
+  network.halfHourFee = document["halfHourFee"] | 0;
+  network.hourFee = document["hourFee"] | 0;
+  network.feesValid = true;
+  updateNetworkStatus();
+
+  if (currentPage == Page::NETWORK) {
+    updateNetworkValues();
+  }
+
+  return true;
+}
+
+// ============================================================================
+// Stable, midstate-optimized local double-SHA256 benchmark
+// ============================================================================
 
 uint8_t countLeadingZeroBits(const uint8_t hash[32]) {
   uint8_t bits = 0;
@@ -1494,233 +1516,321 @@ uint8_t countLeadingZeroBits(const uint8_t hash[32]) {
     }
 
     uint8_t value = hash[index];
-
     while ((value & 0x80) == 0) {
       bits++;
       value <<= 1;
     }
-
     break;
   }
 
   return bits;
 }
 
+void rebuildHeaderMidstate() {
+  mbedtls_sha256_starts_ret(&headerMidstate, 0);
+  mbedtls_sha256_update_ret(&headerMidstate, benchmarkHeader, 64);
+}
+
 void initializeBenchmark() {
   for (uint8_t index = 0; index < 80; index++) {
-    blockHeader[index] =
-        static_cast<uint8_t>(esp_random() & 0xFF);
+    benchmarkHeader[index] = static_cast<uint8_t>(esp_random() & 0xFF);
   }
 
-  mbedtls_sha256_init(&shaContext);
+  mbedtls_sha256_init(&headerMidstate);
+  mbedtls_sha256_init(&firstHashContext);
+  mbedtls_sha256_init(&secondHashContext);
+
+  rebuildHeaderMidstate();
 }
 
 void runHashBatch() {
   uint8_t firstHash[32];
-  uint8_t secondHash[32];
+  uint8_t finalHash[32];
 
-  for (uint16_t batch = 0;
-       batch < HASH_BATCH;
-       batch++) {
+  for (uint16_t index = 0; index < HASH_BATCH_SIZE; index++) {
+    benchmarkHeader[76] = currentNonce & 0xFF;
+    benchmarkHeader[77] = (currentNonce >> 8) & 0xFF;
+    benchmarkHeader[78] = (currentNonce >> 16) & 0xFF;
+    benchmarkHeader[79] = (currentNonce >> 24) & 0xFF;
 
-    blockHeader[76] = nonceValue & 0xFF;
-    blockHeader[77] = (nonceValue >> 8) & 0xFF;
-    blockHeader[78] = (nonceValue >> 16) & 0xFF;
-    blockHeader[79] = (nonceValue >> 24) & 0xFF;
+    // Reuse the SHA-256 state after hashing the constant first 64 bytes.
+    mbedtls_sha256_clone(&firstHashContext, &headerMidstate);
+    mbedtls_sha256_update_ret(&firstHashContext, benchmarkHeader + 64, 16);
+    mbedtls_sha256_finish_ret(&firstHashContext, firstHash);
 
-    mbedtls_sha256_starts_ret(&shaContext, 0);
-    mbedtls_sha256_update_ret(&shaContext, blockHeader, 80);
-    mbedtls_sha256_finish_ret(&shaContext, firstHash);
+    mbedtls_sha256_starts_ret(&secondHashContext, 0);
+    mbedtls_sha256_update_ret(&secondHashContext, firstHash, 32);
+    mbedtls_sha256_finish_ret(&secondHashContext, finalHash);
 
-    mbedtls_sha256_starts_ret(&shaContext, 0);
-    mbedtls_sha256_update_ret(&shaContext, firstHash, 32);
-    mbedtls_sha256_finish_ret(&shaContext, secondHash);
-
-    uint8_t zeroBits =
-        countLeadingZeroBits(secondHash);
-
-    if (zeroBits > sessionBestZeroBits) {
-      sessionBestZeroBits = zeroBits;
+    uint8_t leadingBits = countLeadingZeroBits(finalHash);
+    if (leadingBits > sessionBestLeadingBits) {
+      sessionBestLeadingBits = leadingBits;
     }
 
-    nonceValue++;
+    // A factual local share target: first 16 result bits are zero.
+    if (finalHash[0] == 0 && finalHash[1] == 0) {
+      sessionLocalShares16++;
+    }
+
+    currentNonce++;
     sessionHashes++;
-    hashesThisSecond++;
+    hashesInWindow++;
   }
 }
 
 void sampleHashrate() {
-  currentKHs =
-      hashesThisSecond /
-      (VALUE_UPDATE_MS / 1000.0f) /
-      1000.0f;
+  currentHashrateKHs = hashesInWindow / (VALUE_REFRESH_MS / 1000.0f) / 1000.0f;
+  hashesInWindow = 0;
 
-  hashesThisSecond = 0;
-
-  if (smoothKHs < 0.01f) {
-    smoothKHs = currentKHs;
+  if (smoothedHashrateKHs < 0.01f) {
+    smoothedHashrateKHs = currentHashrateKHs;
   } else {
-    smoothKHs =
-        smoothKHs * 0.75f +
-        currentKHs * 0.25f;
+    smoothedHashrateKHs = smoothedHashrateKHs * 0.72f + currentHashrateKHs * 0.28f;
   }
 }
 
-// -----------------------------------------------------------------------------
-// Navigation
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Navigation and scheduled work
+// ============================================================================
 
-void changePage(Page newPage) {
-  currentPage = newPage;
-  pageNeedsDraw = true;
-  lastPageMs = millis();
+void changePage(Page nextPage) {
+  currentPage = nextPage;
+  pageNeedsFullDraw = true;
+  lastPageChange = millis();
 }
 
 void nextPage() {
-  int next =
-      (static_cast<int>(currentPage) + 1) %
-      PAGE_COUNT;
-
+  uint8_t next = (static_cast<uint8_t>(currentPage) + 1) % PAGE_COUNT;
   changePage(static_cast<Page>(next));
 }
 
-void handleButton() {
-  bool pressed =
-      digitalRead(PIN_BOOT) == LOW;
+void handleBootButton() {
+  bool down = digitalRead(PIN_BOOT) == LOW;
 
-  if (pressed && !buttonWasDown) {
+  if (down && !buttonWasDown) {
     buttonWasDown = true;
-    buttonDownMs = millis();
+    buttonDownMillis = millis();
   }
 
-  if (!pressed && buttonWasDown) {
-    uint32_t duration =
-        millis() - buttonDownMs;
-
+  if (!down && buttonWasDown) {
+    uint32_t heldMillis = millis() - buttonDownMillis;
     buttonWasDown = false;
 
-    if (duration >= BUTTON_LONG_MS) {
-      reopenConfiguration();
+    if (heldMillis >= LONG_BUTTON_PRESS_MS) {
+      reopenWifiSetup();
     } else {
       nextPage();
     }
   }
 }
 
-void handleAutoRotation() {
+void maintainPageRotation() {
   if (!config.autoRotate) {
     return;
   }
 
-  uint32_t interval =
-      static_cast<uint32_t>(config.pageSeconds) *
-      1000UL;
-
-  if (millis() - lastPageMs >= interval) {
+  uint32_t pageInterval = static_cast<uint32_t>(config.pageSeconds) * 1000UL;
+  if (millis() - lastPageChange >= pageInterval) {
     nextPage();
   }
 }
-
-// -----------------------------------------------------------------------------
-// Scheduled maintenance
-// -----------------------------------------------------------------------------
 
 void maintainWifi() {
   if (WiFi.status() == WL_CONNECTED) {
     return;
   }
 
-  if (millis() - lastWifiReconnectMs <
-      WIFI_RECONNECT_MS) {
+  if (millis() - lastWifiReconnect < WIFI_RECONNECT_MS) {
     return;
   }
 
-  lastWifiReconnectMs = millis();
-  diagnostics.wifiReconnects++;
-
+  lastWifiReconnect = millis();
+  diagnostics.wifiReconnectCount++;
   WiFi.reconnect();
 }
 
-void maintainData() {
-  if (WiFi.status() != WL_CONNECTED) {
+void maintainStartupFetches() {
+  if (WiFi.status() != WL_CONNECTED || millis() < nextStartupFetchMillis) {
     return;
   }
 
-  if (millis() - lastMarketMs >= MARKET_UPDATE_MS) {
-    fetchMarketData();
+  switch (startupFetchStep) {
+    case StartupFetchStep::WAITING:
+      startupFetchStep = StartupFetchStep::BLOCK_HEIGHT;
+      nextStartupFetchMillis = millis() + 250;
+      break;
+
+    case StartupFetchStep::BLOCK_HEIGHT:
+      fetchBlockHeight();
+      startupFetchStep = StartupFetchStep::FEES;
+      nextStartupFetchMillis = millis() + 700;
+      break;
+
+    case StartupFetchStep::FEES:
+      fetchRecommendedFees();
+      lastNetworkRefresh = millis();
+      startupFetchStep = StartupFetchStep::TICKER;
+      nextStartupFetchMillis = millis() + 700;
+      break;
+
+    case StartupFetchStep::TICKER:
+      fetchCoinbaseTicker();
+      startupFetchStep = StartupFetchStep::STATS;
+      nextStartupFetchMillis = millis() + 700;
+      break;
+
+    case StartupFetchStep::STATS:
+      fetchCoinbaseStats();
+      startupFetchStep = StartupFetchStep::CANDLES;
+      nextStartupFetchMillis = millis() + 1000;
+      break;
+
+    case StartupFetchStep::CANDLES:
+      if (clockReady()) {
+        fetchCoinbaseHourlyCandles();
+        lastMarketRefresh = millis();
+        startupFetchStep = StartupFetchStep::COMPLETE;
+      } else {
+        nextStartupFetchMillis = millis() + 1000;
+      }
+      break;
+
+    case StartupFetchStep::COMPLETE:
+      break;
+  }
+}
+
+void maintainScheduledData() {
+  if (WiFi.status() != WL_CONNECTED || startupFetchStep != StartupFetchStep::COMPLETE) {
+    return;
   }
 
-  if (millis() - lastNetworkMs >= NETWORK_UPDATE_MS) {
-    fetchNetworkData();
+  // Execute at most one HTTPS request per scheduler step.
+  if (pendingApiTask != PendingApiTask::NONE) {
+    if (millis() < pendingApiMillis) {
+      return;
+    }
+
+    switch (pendingApiTask) {
+      case PendingApiTask::MARKET_STATS:
+        fetchCoinbaseStats();
+        pendingApiTask = PendingApiTask::MARKET_CANDLES;
+        pendingApiMillis = millis() + 800;
+        return;
+
+      case PendingApiTask::MARKET_CANDLES:
+        fetchCoinbaseHourlyCandles();
+        pendingApiTask = PendingApiTask::NONE;
+        return;
+
+      case PendingApiTask::NETWORK_HEIGHT:
+        fetchBlockHeight();
+        pendingApiTask = PendingApiTask::NETWORK_FEES;
+        pendingApiMillis = millis() + 800;
+        return;
+
+      case PendingApiTask::NETWORK_FEES:
+        fetchRecommendedFees();
+        pendingApiTask = PendingApiTask::NONE;
+        return;
+
+      case PendingApiTask::NONE:
+        break;
+    }
+  }
+
+  if (millis() - lastTickerRefresh >= TICKER_REFRESH_MS) {
+    fetchCoinbaseTicker();
+    return;
+  }
+
+  if (millis() - lastMarketRefresh >= MARKET_REFRESH_MS) {
+    lastMarketRefresh = millis();
+    pendingApiTask = PendingApiTask::MARKET_STATS;
+    pendingApiMillis = millis();
+    return;
+  }
+
+  if (millis() - lastNetworkRefresh >= NETWORK_REFRESH_MS) {
+    lastNetworkRefresh = millis();
+    pendingApiTask = PendingApiTask::NETWORK_HEIGHT;
+    pendingApiMillis = millis();
   }
 }
 
 void maintainPersistence() {
-  if (millis() - lastSaveMs >= SAVE_UPDATE_MS) {
+  if (millis() - lastSaveRefresh >= SAVE_REFRESH_MS) {
     saveLifetimeStats();
   }
 }
 
-// -----------------------------------------------------------------------------
-// Setup and loop
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Arduino setup and loop
+// ============================================================================
 
 void setup() {
   Serial.begin(115200);
-  bootMs = millis();
+  bootMillis = millis();
 
   pinMode(PIN_BACKLIGHT, OUTPUT);
   digitalWrite(PIN_BACKLIGHT, HIGH);
-
   pinMode(PIN_BOOT, INPUT_PULLUP);
 
   diagnostics.resetReason = esp_reset_reason();
-  diagnostics.minFreeHeap = ESP.getFreeHeap();
+  diagnostics.minimumFreeHeap = ESP.getFreeHeap();
 
-  loadPreferences();
+  loadPersistentData();
 
   tft.init();
   tft.setRotation(1);
-  tft.fillScreen(C_BG);
+  tft.fillScreen(COL_BG);
 
   configureWifi();
   configureClock();
   initializeBenchmark();
 
-  currentPage = Page::HOME;
-  lastPageMs = millis();
-  lastSaveMs = millis();
+  currentPage = Page::MINER;
+  lastPageChange = millis();
+  lastSaveRefresh = millis();
+  nextStartupFetchMillis = millis() + 1500;
 
-  drawCurrentLayout();
-  updateCurrentValues();
-
-  fetchNetworkData();
-  fetchMarketData();
+  drawCurrentPageLayout();
+  updateCurrentPageValues();
 }
 
 void loop() {
+  // Cooperative small batches keep the UI and Wi-Fi responsive.
   runHashBatch();
 
-  handleButton();
-  handleAutoRotation();
+  handleBootButton();
+  maintainPageRotation();
   maintainWifi();
-  maintainData();
+  maintainStartupFetches();
+  maintainScheduledData();
   maintainPersistence();
 
-  if (pageNeedsDraw) {
-    drawCurrentLayout();
-    updateCurrentValues();
+  // The complete screen is redrawn only after a page change.
+  if (pageNeedsFullDraw) {
+    drawCurrentPageLayout();
+    updateCurrentPageValues();
 
     if (currentPage == Page::MARKET) {
-      drawRealCandles();
+      drawMarketChart();
     }
   }
 
-  if (millis() - lastValueMs >= VALUE_UPDATE_MS) {
-    lastValueMs = millis();
-
+  // Once per second, only the changing value rectangles are updated.
+  if (millis() - lastValueRefresh >= VALUE_REFRESH_MS) {
+    lastValueRefresh = millis();
     sampleHashrate();
-    updateCurrentValues();
+
+    if (currentPage == Page::MINER || currentPage == Page::DEVICE) {
+      updateCurrentPageValues();
+    }
+  }
+
+  if (currentPage == Page::MARKET && chartNeedsDraw) {
+    drawMarketChart();
   }
 
   delay(1);
