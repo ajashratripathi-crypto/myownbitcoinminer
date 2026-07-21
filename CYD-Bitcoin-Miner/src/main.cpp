@@ -1,23 +1,27 @@
 
 /*
-  CYD Bitcoin Lab ULTRA — replacement main.cpp only
+  CYD Bitcoin Lab STABLE — replacement main.cpp only
   Target: ESP32-2432S028R / ESP32-WROOM-32E / 2.8" ILI9341 CYD
 
-  What changed:
-  - Two optimized hashing workers, one on each ESP32 core
-  - Reuses SHA-256 contexts instead of rebuilding them for every hash
-  - Wi-Fi setup remains the first screen until connection succeeds
-  - Much denser NerdMiner-style dashboard
-  - Pages: Miner Dashboard, Big Hashrate, Bitcoin Market, System
-  - BOOT button changes pages; hold BOOT for 3 seconds to reopen Wi-Fi setup
-  - Real local double-SHA256 hashing, real measured hashrate
-  - Real BTC/USD price, block height, and recommended fees
-  - No pool connection, no share submission, no transactions
+  Design goals:
+  - No full-screen redraw every second
+  - Only changing number regions are refreshed
+  - Automatically changes to the next page every 10 seconds
+  - Uses factual values only
+  - Real local double-SHA256 benchmark
+  - Real BTC/USD price from CoinGecko
+  - Real Bitcoin block height and recommended fees from mempool.space
+  - No fake shares, fake blocks, fake templates, or fake earnings
+  - No pool connection and no transaction submission
 
-  Existing libraries required:
-    TFT_eSPI
-    ArduinoJson
-    WiFiManager
+  Controls:
+  - Short press BOOT: next page
+  - Hold BOOT for 3 seconds: clear Wi-Fi and reopen setup portal
+
+  Required libraries:
+  - TFT_eSPI
+  - ArduinoJson
+  - WiFiManager
 */
 
 #include <Arduino.h>
@@ -30,7 +34,7 @@
 #include "mbedtls/sha256.h"
 
 // -----------------------------------------------------------------------------
-// CYD hardware
+// Hardware
 // -----------------------------------------------------------------------------
 
 static constexpr uint8_t PIN_BACKLIGHT = 21;
@@ -39,7 +43,7 @@ static constexpr uint8_t PIN_BOOT = 0;
 TFT_eSPI tft = TFT_eSPI();
 
 // -----------------------------------------------------------------------------
-// Theme
+// Colors
 // -----------------------------------------------------------------------------
 
 static constexpr uint16_t C_BG       = 0x0000;
@@ -49,7 +53,6 @@ static constexpr uint16_t C_BORDER   = 0x3186;
 static constexpr uint16_t C_TEXT     = 0xFFFF;
 static constexpr uint16_t C_MUTED    = 0x8C71;
 static constexpr uint16_t C_ORANGE   = 0xFD20;
-static constexpr uint16_t C_ORANGE2  = 0xFB80;
 static constexpr uint16_t C_CYAN     = 0x05FF;
 static constexpr uint16_t C_GREEN    = 0x07E0;
 static constexpr uint16_t C_RED      = 0xF800;
@@ -57,104 +60,99 @@ static constexpr uint16_t C_YELLOW   = 0xFFE0;
 static constexpr uint16_t C_PURPLE   = 0xA81F;
 
 // -----------------------------------------------------------------------------
-// Firmware settings
+// Timing
 // -----------------------------------------------------------------------------
 
-static const char* FW_NAME = "CYD BTC ULTRA";
-static const char* AP_NAME = "CYD-Miner-Setup";
-static const char* AP_PASSWORD = "bitcoin123";
-
-static constexpr uint32_t UI_INTERVAL_MS = 2000;
+static constexpr uint32_t STATS_INTERVAL_MS = 1000;
+static constexpr uint32_t PAGE_INTERVAL_MS = 10000;
 static constexpr uint32_t MARKET_INTERVAL_MS = 15UL * 60UL * 1000UL;
 static constexpr uint32_t NETWORK_INTERVAL_MS = 5UL * 60UL * 1000UL;
 static constexpr uint32_t BUTTON_DEBOUNCE_MS = 250;
 static constexpr uint32_t BUTTON_LONG_PRESS_MS = 3000;
-static constexpr uint64_t TEMPLATE_HASH_LIMIT = 10000000ULL;
+
+// -----------------------------------------------------------------------------
+// Wi-Fi
+// -----------------------------------------------------------------------------
+
+static const char* AP_NAME = "CYD-Miner-Setup";
+static const char* AP_PASSWORD = "bitcoin123";
 
 // -----------------------------------------------------------------------------
 // Application state
 // -----------------------------------------------------------------------------
 
 enum class Page : uint8_t {
-  DASHBOARD = 0,
-  HASHRATE = 1,
+  MINER = 0,
+  SPEED = 1,
   MARKET = 2,
-  SYSTEM = 3
+  NETWORK = 3,
+  SYSTEM = 4
 };
 
-Page page = Page::DASHBOARD;
+static constexpr uint8_t PAGE_COUNT = 5;
+
+Page currentPage = Page::MINER;
 
 uint32_t bootMs = 0;
-uint32_t lastUiMs = 0;
+uint32_t lastStatsMs = 0;
+uint32_t lastPageMs = 0;
 uint32_t lastMarketMs = 0;
 uint32_t lastNetworkMs = 0;
 uint32_t lastButtonMs = 0;
 uint32_t buttonDownMs = 0;
+
 bool buttonWasDown = false;
-bool screenDirty = true;
-
-String minerName = "ORANGE NODE";
+bool layoutDrawn = false;
+bool miningEnabled = false;
+bool pauseMining = false;
 
 // -----------------------------------------------------------------------------
-// Mining engine
+// Real mining benchmark state
 // -----------------------------------------------------------------------------
 
-struct MiningCounters {
-  uint64_t totalHashes;
-  uint32_t windowHashes;
-  uint32_t currentNonce;
-  uint32_t templates;
-  uint32_t shares32;
-  uint32_t validBlocks;
-  uint8_t bestLeadingBits;
-  double bestDifficulty;
+struct SharedMiningState {
+  uint64_t totalHashes = 0;
+  uint32_t hashesWindow = 0;
+  uint32_t nonce = 0;
+  uint8_t bestLeadingZeroBits = 0;
 };
 
-MiningCounters counters = {};
-portMUX_TYPE countersMux = portMUX_INITIALIZER_UNLOCKED;
+SharedMiningState sharedMining;
+portMUX_TYPE miningMux = portMUX_INITIALIZER_UNLOCKED;
 
-volatile bool miningEnabled = false;
-volatile bool pauseMining = false;
-
-struct MiningDisplay {
+struct MiningSnapshot {
   uint64_t totalHashes = 0;
-  uint32_t currentNonce = 0;
-  uint32_t templates = 0;
-  uint32_t shares32 = 0;
-  uint32_t validBlocks = 0;
-  uint8_t bestLeadingBits = 0;
-  double bestDifficulty = 0;
+  uint32_t nonce = 0;
+  uint8_t bestLeadingZeroBits = 0;
   float currentKHs = 0;
   float smoothKHs = 0;
 };
 
-MiningDisplay mining;
+MiningSnapshot mining;
 
 // -----------------------------------------------------------------------------
-// Market and network
+// Real public data
 // -----------------------------------------------------------------------------
 
-struct MarketState {
+struct MarketData {
   bool valid = false;
-  float price = 0;
+  float priceUsd = 0;
   float change24h = 0;
-  float high24h = 0;
-  float low24h = 0;
   String error;
 };
 
-struct NetworkState {
+struct NetworkData {
   bool heightValid = false;
   bool feesValid = false;
-  uint32_t height = 0;
+  uint32_t blockHeight = 0;
   int fastestFee = 0;
   int halfHourFee = 0;
   int hourFee = 0;
   String error;
 };
 
-MarketState market;
-NetworkState network;
+MarketData market;
+NetworkData network;
 
 // -----------------------------------------------------------------------------
 // Formatting
@@ -178,48 +176,27 @@ String compactNumber(double value) {
   return String(buffer);
 }
 
-String difficultyText(double value) {
-  char buffer[24];
-
-  if (value >= 1000000.0) {
-    snprintf(buffer, sizeof(buffer), "%.3fM", value / 1000000.0);
-  } else if (value >= 1000.0) {
-    snprintf(buffer, sizeof(buffer), "%.3fK", value / 1000.0);
-  } else if (value >= 1.0) {
-    snprintf(buffer, sizeof(buffer), "%.4f", value);
-  } else {
-    snprintf(buffer, sizeof(buffer), "%.6f", value);
-  }
-
-  return String(buffer);
-}
-
 String uptimeText() {
   uint32_t seconds = (millis() - bootMs) / 1000UL;
-  uint32_t days = seconds / 86400UL;
-  uint32_t hours = (seconds % 86400UL) / 3600UL;
+  uint32_t hours = seconds / 3600UL;
   uint32_t minutes = (seconds % 3600UL) / 60UL;
-  uint32_t secs = seconds % 60UL;
+  uint32_t remaining = seconds % 60UL;
 
-  char buffer[24];
-  if (days > 0) {
-    snprintf(buffer, sizeof(buffer), "%lud %02lu:%02lu:%02lu",
-             (unsigned long)days,
-             (unsigned long)hours,
-             (unsigned long)minutes,
-             (unsigned long)secs);
-  } else {
-    snprintf(buffer, sizeof(buffer), "%02lu:%02lu:%02lu",
-             (unsigned long)hours,
-             (unsigned long)minutes,
-             (unsigned long)secs);
-  }
+  char buffer[20];
+  snprintf(
+    buffer,
+    sizeof(buffer),
+    "%02lu:%02lu:%02lu",
+    static_cast<unsigned long>(hours),
+    static_cast<unsigned long>(minutes),
+    static_cast<unsigned long>(remaining)
+  );
 
   return String(buffer);
 }
 
 // -----------------------------------------------------------------------------
-// UI primitives
+// UI helpers
 // -----------------------------------------------------------------------------
 
 void panel(int x, int y, int w, int h, uint16_t fill = C_PANEL) {
@@ -227,93 +204,527 @@ void panel(int x, int y, int w, int h, uint16_t fill = C_PANEL) {
   tft.drawRoundRect(x, y, w, h, 7, C_BORDER);
 }
 
-void textLeft(const String& value, int x, int y,
-              uint16_t fg, uint16_t bg, uint8_t font) {
+void leftText(
+  const String& value,
+  int x,
+  int y,
+  uint16_t foreground,
+  uint16_t background,
+  uint8_t font
+) {
   tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(fg, bg);
+  tft.setTextColor(foreground, background);
   tft.drawString(value, x, y, font);
 }
 
-void textCenter(const String& value, int x, int y,
-                uint16_t fg, uint16_t bg, uint8_t font) {
+void centeredText(
+  const String& value,
+  int x,
+  int y,
+  uint16_t foreground,
+  uint16_t background,
+  uint8_t font
+) {
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(fg, bg);
+  tft.setTextColor(foreground, background);
   tft.drawString(value, x, y, font);
   tft.setTextDatum(TL_DATUM);
 }
 
-void header(const String& title, const String& subtitle) {
-  tft.fillRect(0, 0, 320, 33, C_PANEL);
-  tft.drawFastHLine(0, 32, 320, C_BORDER);
+void clearValueArea(int x, int y, int w, int h, uint16_t background) {
+  tft.fillRect(x, y, w, h, background);
+}
 
-  tft.fillCircle(17, 16, 11, C_ORANGE);
-  textCenter("B", 17, 16, C_TEXT, C_ORANGE, 2);
+void drawHeader(const String& title, const String& subtitle) {
+  tft.fillRect(0, 0, 320, 34, C_PANEL);
+  tft.drawFastHLine(0, 33, 320, C_BORDER);
 
-  textLeft(title, 35, 2, C_TEXT, C_PANEL, 2);
-  textLeft(subtitle, 35, 19, C_MUTED, C_PANEL, 1);
+  tft.fillCircle(17, 17, 11, C_ORANGE);
+  centeredText("B", 17, 17, C_TEXT, C_ORANGE, 2);
+
+  leftText(title, 36, 3, C_TEXT, C_PANEL, 2);
+  leftText(subtitle, 36, 20, C_MUTED, C_PANEL, 1);
 
   bool online = WiFi.status() == WL_CONNECTED;
   tft.fillCircle(301, 10, 4, online ? C_GREEN : C_RED);
-  textCenter(online ? "ONLINE" : "OFFLINE",
-             283, 23, online ? C_GREEN : C_RED, C_PANEL, 1);
+  centeredText(
+    online ? "ONLINE" : "OFFLINE",
+    283,
+    24,
+    online ? C_GREEN : C_RED,
+    C_PANEL,
+    1
+  );
 }
 
-void footer() {
-  static const char* names[] = {"MINER", "SPEED", "BTC", "SYS"};
+void drawFooter() {
+  static const char* names[PAGE_COUNT] = {
+    "MINER", "SPEED", "BTC", "NET", "SYS"
+  };
+
+  const int width = 64;
 
   tft.fillRect(0, 216, 320, 24, C_PANEL);
   tft.drawFastHLine(0, 216, 320, C_BORDER);
 
-  for (int i = 0; i < 4; i++) {
-    bool active = static_cast<int>(page) == i;
-    uint16_t color = active ? C_ORANGE : C_MUTED;
+  for (int i = 0; i < PAGE_COUNT; i++) {
+    bool active = static_cast<int>(currentPage) == i;
 
     if (active) {
-      tft.fillRoundRect(i * 80 + 8, 219, 64, 18, 6, C_PANEL2);
+      tft.fillRoundRect(i * width + 4, 219, 56, 18, 6, C_PANEL2);
     }
 
-    textCenter(names[i], i * 80 + 40, 228,
-               color, active ? C_PANEL2 : C_PANEL, 1);
+    centeredText(
+      names[i],
+      i * width + 32,
+      228,
+      active ? C_ORANGE : C_MUTED,
+      active ? C_PANEL2 : C_PANEL,
+      1
+    );
   }
 }
 
-void statBox(int x, int y, int w, int h,
-             const String& label, const String& value,
-             uint16_t color) {
+void statBox(
+  int x,
+  int y,
+  int w,
+  int h,
+  const String& label
+) {
   panel(x, y, w, h);
-  textCenter(label, x + w / 2, y + 10, C_MUTED, C_PANEL, 1);
-  textCenter(value, x + w / 2, y + 29, color, C_PANEL, 2);
+  centeredText(label, x + w / 2, y + 11, C_MUTED, C_PANEL, 1);
 }
 
 // -----------------------------------------------------------------------------
-// Wi-Fi setup
+// Static page layouts
+// -----------------------------------------------------------------------------
+
+void drawMinerLayout() {
+  tft.fillScreen(C_BG);
+  drawHeader("BITCOIN HASH LAB", "REAL LOCAL DOUBLE-SHA256");
+
+  panel(8, 42, 304, 68);
+  leftText("MEASURED HASHRATE", 18, 50, C_MUTED, C_PANEL, 1);
+
+  statBox(8, 119, 96, 87, "TOTAL HASHES");
+  statBox(112, 119, 96, 87, "BEST ZERO BITS");
+  statBox(216, 119, 96, 87, "UPTIME");
+
+  drawFooter();
+}
+
+void drawSpeedLayout() {
+  tft.fillScreen(C_BG);
+  drawHeader("HASH ENGINE", "TWO COOPERATIVE WORKERS");
+
+  panel(14, 47, 292, 105);
+  centeredText("CURRENT SPEED", 160, 62, C_MUTED, C_PANEL, 1);
+
+  statBox(14, 161, 138, 45, "CURRENT NONCE");
+  statBox(168, 161, 138, 45, "ESP32 CORES");
+
+  drawFooter();
+}
+
+void drawMarketLayout() {
+  tft.fillScreen(C_BG);
+  drawHeader("BITCOIN MARKET", "LIVE COINGECKO DATA");
+
+  panel(10, 44, 300, 75);
+  leftText("BTC / USD", 20, 53, C_MUTED, C_PANEL, 1);
+
+  panel(10, 128, 300, 78);
+  centeredText(
+    "Price refreshes every 15 minutes",
+    160,
+    145,
+    C_MUTED,
+    C_PANEL,
+    1
+  );
+
+  drawFooter();
+}
+
+void drawNetworkLayout() {
+  tft.fillScreen(C_BG);
+  drawHeader("BITCOIN NETWORK", "LIVE MEMPOOL.SPACE DATA");
+
+  statBox(10, 45, 300, 48, "CURRENT BLOCK HEIGHT");
+
+  statBox(10, 103, 94, 100, "FASTEST");
+  statBox(113, 103, 94, 100, "30 MIN");
+  statBox(216, 103, 94, 100, "1 HOUR");
+
+  drawFooter();
+}
+
+void drawSystemLayout() {
+  tft.fillScreen(C_BG);
+  drawHeader("SYSTEM", "ESP32-2432S028R");
+
+  statBox(10, 45, 145, 67, "CPU");
+  statBox(165, 45, 145, 67, "FREE HEAP");
+  statBox(10, 121, 145, 67, "WI-FI SIGNAL");
+  statBox(165, 121, 145, 67, "FLASH");
+
+  centeredText(
+    "Short BOOT: next page   Hold BOOT: Wi-Fi setup",
+    160,
+    202,
+    C_MUTED,
+    C_BG,
+    1
+  );
+
+  drawFooter();
+}
+
+void drawCurrentLayout() {
+  switch (currentPage) {
+    case Page::MINER:
+      drawMinerLayout();
+      break;
+
+    case Page::SPEED:
+      drawSpeedLayout();
+      break;
+
+    case Page::MARKET:
+      drawMarketLayout();
+      break;
+
+    case Page::NETWORK:
+      drawNetworkLayout();
+      break;
+
+    case Page::SYSTEM:
+      drawSystemLayout();
+      break;
+  }
+
+  layoutDrawn = true;
+}
+
+// -----------------------------------------------------------------------------
+// Incremental value updates
+// -----------------------------------------------------------------------------
+
+void updateMinerValues() {
+  // Hashrate
+  clearValueArea(17, 67, 285, 35, C_PANEL);
+  leftText(
+    String(mining.smoothKHs, 2),
+    18,
+    65,
+    C_ORANGE,
+    C_PANEL,
+    4
+  );
+  leftText("kH/s", 193, 79, C_TEXT, C_PANEL, 2);
+
+  // Total hashes
+  clearValueArea(17, 146, 78, 42, C_PANEL);
+  centeredText(
+    compactNumber(mining.totalHashes),
+    56,
+    166,
+    C_TEXT,
+    C_PANEL,
+    2
+  );
+
+  // Best real leading-zero-bit score
+  clearValueArea(121, 146, 78, 42, C_PANEL);
+  centeredText(
+    String(mining.bestLeadingZeroBits),
+    160,
+    166,
+    C_YELLOW,
+    C_PANEL,
+    4
+  );
+
+  // Uptime
+  clearValueArea(225, 146, 78, 42, C_PANEL);
+  centeredText(
+    uptimeText(),
+    264,
+    166,
+    C_CYAN,
+    C_PANEL,
+    2
+  );
+}
+
+void updateSpeedValues() {
+  clearValueArea(28, 78, 264, 58, C_PANEL);
+
+  centeredText(
+    String(mining.smoothKHs, 2),
+    160,
+    98,
+    C_ORANGE,
+    C_PANEL,
+    6
+  );
+
+  centeredText("kH/s", 160, 133, C_TEXT, C_PANEL, 2);
+
+  clearValueArea(23, 183, 120, 16, C_PANEL);
+
+  char nonceBuffer[16];
+  snprintf(
+    nonceBuffer,
+    sizeof(nonceBuffer),
+    "%08lX",
+    static_cast<unsigned long>(mining.nonce)
+  );
+
+  centeredText(
+    String(nonceBuffer),
+    83,
+    191,
+    C_CYAN,
+    C_PANEL,
+    2
+  );
+
+  clearValueArea(177, 183, 120, 16, C_PANEL);
+  centeredText(
+    String(ESP.getChipCores()),
+    237,
+    191,
+    C_GREEN,
+    C_PANEL,
+    2
+  );
+}
+
+void updateMarketValues() {
+  clearValueArea(19, 68, 282, 40, C_PANEL);
+
+  if (market.valid) {
+    leftText(
+      "$" + String(market.priceUsd, 0),
+      20,
+      67,
+      C_ORANGE,
+      C_PANEL,
+      4
+    );
+
+    uint16_t color = market.change24h >= 0 ? C_GREEN : C_RED;
+
+    String change =
+        String(market.change24h >= 0 ? "+" : "") +
+        String(market.change24h, 2) +
+        "%";
+
+    centeredText(
+      change,
+      265,
+      83,
+      color,
+      C_PANEL,
+      2
+    );
+  } else {
+    centeredText(
+      market.error.length() ? market.error : "Loading price...",
+      160,
+      86,
+      C_MUTED,
+      C_PANEL,
+      2
+    );
+  }
+
+  clearValueArea(22, 161, 276, 34, C_PANEL);
+
+  centeredText(
+    market.valid
+      ? "Source: CoinGecko public API"
+      : "Waiting for public market data",
+    160,
+    178,
+    market.valid ? C_GREEN : C_MUTED,
+    C_PANEL,
+    1
+  );
+}
+
+void updateNetworkValues() {
+  clearValueArea(22, 69, 276, 17, C_PANEL);
+
+  centeredText(
+    network.heightValid ? String(network.blockHeight) : "--",
+    160,
+    78,
+    C_PURPLE,
+    C_PANEL,
+    2
+  );
+
+  clearValueArea(18, 132, 78, 55, C_PANEL);
+  clearValueArea(121, 132, 78, 55, C_PANEL);
+  clearValueArea(224, 132, 78, 55, C_PANEL);
+
+  centeredText(
+    network.feesValid
+      ? String(network.fastestFee)
+      : "--",
+    57,
+    151,
+    C_ORANGE,
+    C_PANEL,
+    4
+  );
+  centeredText("sat/vB", 57, 180, C_MUTED, C_PANEL, 1);
+
+  centeredText(
+    network.feesValid
+      ? String(network.halfHourFee)
+      : "--",
+    160,
+    151,
+    C_YELLOW,
+    C_PANEL,
+    4
+  );
+  centeredText("sat/vB", 160, 180, C_MUTED, C_PANEL, 1);
+
+  centeredText(
+    network.feesValid
+      ? String(network.hourFee)
+      : "--",
+    263,
+    151,
+    C_CYAN,
+    C_PANEL,
+    4
+  );
+  centeredText("sat/vB", 263, 180, C_MUTED, C_PANEL, 1);
+}
+
+void updateSystemValues() {
+  clearValueArea(20, 72, 125, 28, C_PANEL);
+  centeredText(
+    String(ESP.getCpuFreqMHz()) + " MHz",
+    82,
+    86,
+    C_ORANGE,
+    C_PANEL,
+    2
+  );
+
+  clearValueArea(175, 72, 125, 28, C_PANEL);
+  centeredText(
+    compactNumber(ESP.getFreeHeap()),
+    237,
+    86,
+    C_CYAN,
+    C_PANEL,
+    2
+  );
+
+  clearValueArea(20, 148, 125, 28, C_PANEL);
+  centeredText(
+    WiFi.status() == WL_CONNECTED
+      ? String(WiFi.RSSI()) + " dBm"
+      : "Offline",
+    82,
+    162,
+    WiFi.status() == WL_CONNECTED ? C_GREEN : C_RED,
+    C_PANEL,
+    2
+  );
+
+  clearValueArea(175, 148, 125, 28, C_PANEL);
+  centeredText(
+    String(ESP.getFlashChipSize() / 1024UL / 1024UL) + " MB",
+    237,
+    162,
+    C_PURPLE,
+    C_PANEL,
+    2
+  );
+}
+
+void updateCurrentPageValues() {
+  switch (currentPage) {
+    case Page::MINER:
+      updateMinerValues();
+      break;
+
+    case Page::SPEED:
+      updateSpeedValues();
+      break;
+
+    case Page::MARKET:
+      updateMarketValues();
+      break;
+
+    case Page::NETWORK:
+      updateNetworkValues();
+      break;
+
+    case Page::SYSTEM:
+      updateSystemValues();
+      break;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Wi-Fi
 // -----------------------------------------------------------------------------
 
 void drawWifiSetupScreen() {
   tft.fillScreen(C_BG);
-  header("WI-FI SETUP", "FIRST BOOT CONFIGURATION");
+  drawHeader("WI-FI SETUP", "FIRST-RUN CONFIGURATION");
 
-  panel(12, 45, 296, 54);
-  textCenter("Connect to this temporary network:", 160, 58,
-             C_MUTED, C_PANEL, 1);
-  textCenter(AP_NAME, 160, 78, C_ORANGE, C_PANEL, 2);
-  textCenter(String("Password: ") + AP_PASSWORD, 160, 93,
-             C_TEXT, C_PANEL, 1);
+  panel(12, 48, 296, 52);
+  centeredText(
+    "Connect your phone or Chromebook to:",
+    160,
+    61,
+    C_MUTED,
+    C_PANEL,
+    1
+  );
+  centeredText(AP_NAME, 160, 82, C_ORANGE, C_PANEL, 2);
 
-  panel(12, 108, 296, 62);
-  textCenter("Choose your home Wi-Fi and enter its password.", 160, 124,
-             C_TEXT, C_PANEL, 1);
-  textCenter("The setup page scans nearby networks.", 160, 143,
-             C_CYAN, C_PANEL, 1);
-  textCenter("Open 192.168.4.1 if it does not appear.", 160, 159,
-             C_MUTED, C_PANEL, 1);
+  panel(12, 109, 296, 58);
+  centeredText(
+    String("Password: ") + AP_PASSWORD,
+    160,
+    126,
+    C_TEXT,
+    C_PANEL,
+    2
+  );
+  centeredText(
+    "Choose your home Wi-Fi in the setup page.",
+    160,
+    151,
+    C_CYAN,
+    C_PANEL,
+    1
+  );
 
-  panel(12, 179, 296, 27);
-  textCenter("Dashboard stays locked until Wi-Fi connects.", 160, 192,
-             C_YELLOW, C_PANEL, 1);
+  panel(12, 176, 296, 30);
+  centeredText(
+    "Open 192.168.4.1 if the portal does not appear.",
+    160,
+    191,
+    C_YELLOW,
+    C_PANEL,
+    1
+  );
 }
 
-bool setupWifi() {
+bool configureWifi() {
   drawWifiSetupScreen();
 
   WiFiManager manager;
@@ -326,40 +737,73 @@ bool setupWifi() {
 
   if (!connected) {
     tft.fillScreen(C_BG);
-    textCenter("WI-FI SETUP FAILED", 160, 95, C_RED, C_BG, 4);
-    textCenter("Restarting setup...", 160, 132, C_MUTED, C_BG, 2);
-    delay(3000);
+    centeredText(
+      "WI-FI SETUP FAILED",
+      160,
+      105,
+      C_RED,
+      C_BG,
+      4
+    );
+    delay(2500);
     ESP.restart();
   }
 
   tft.fillScreen(C_BG);
-  textCenter("WI-FI CONNECTED", 160, 94, C_GREEN, C_BG, 4);
-  textCenter(WiFi.SSID(), 160, 129, C_TEXT, C_BG, 2);
-  textCenter(WiFi.localIP().toString(), 160, 155, C_CYAN, C_BG, 2);
-  delay(1400);
+  centeredText(
+    "WI-FI CONNECTED",
+    160,
+    100,
+    C_GREEN,
+    C_BG,
+    4
+  );
+  centeredText(
+    WiFi.SSID(),
+    160,
+    137,
+    C_TEXT,
+    C_BG,
+    2
+  );
+  centeredText(
+    WiFi.localIP().toString(),
+    160,
+    163,
+    C_CYAN,
+    C_BG,
+    2
+  );
 
+  delay(1200);
   return true;
 }
 
-void reopenWifiSetup() {
+void resetWifi() {
   miningEnabled = false;
 
   tft.fillScreen(C_BG);
-  textCenter("RESETTING WI-FI", 160, 105, C_ORANGE, C_BG, 4);
-  textCenter("The setup portal will reopen.", 160, 140, C_MUTED, C_BG, 2);
+  centeredText(
+    "RESETTING WI-FI",
+    160,
+    108,
+    C_ORANGE,
+    C_BG,
+    4
+  );
 
   WiFiManager manager;
   manager.resetSettings();
 
-  delay(1800);
+  delay(1500);
   ESP.restart();
 }
 
 // -----------------------------------------------------------------------------
-// HTTP data
+// Public API requests
 // -----------------------------------------------------------------------------
 
-bool httpsGet(const String& url, String& response) {
+bool secureGet(const String& url, String& response) {
   if (WiFi.status() != WL_CONNECTED) {
     return false;
   }
@@ -369,43 +813,51 @@ bool httpsGet(const String& url, String& response) {
 
   HTTPClient http;
   http.setTimeout(10000);
-  http.setUserAgent("CYD-BTC-Ultra/1.0");
+  http.setUserAgent("CYD-Bitcoin-Lab-Stable/1.0");
 
   if (!http.begin(client, url)) {
     return false;
   }
 
-  int code = http.GET();
-  if (code != HTTP_CODE_OK) {
+  int statusCode = http.GET();
+
+  if (statusCode != HTTP_CODE_OK) {
     http.end();
     return false;
   }
 
   response = http.getString();
   http.end();
+
   return true;
 }
 
-void fetchBitcoinPrice() {
+void fetchMarketData() {
   pauseMining = true;
 
   String response;
+
   const String url =
       "https://api.coingecko.com/api/v3/simple/price"
-      "?ids=bitcoin&vs_currencies=usd&include_24hr_change=true";
+      "?ids=bitcoin"
+      "&vs_currencies=usd"
+      "&include_24hr_change=true";
 
-  if (httpsGet(url, response)) {
+  if (secureGet(url, response)) {
     DynamicJsonDocument document(2048);
+
     if (!deserializeJson(document, response)) {
-      market.price = document["bitcoin"]["usd"] | 0.0f;
+      market.priceUsd = document["bitcoin"]["usd"] | 0.0f;
       market.change24h =
           document["bitcoin"]["usd_24h_change"] | 0.0f;
-      market.valid = market.price > 0;
+      market.valid = market.priceUsd > 0;
       market.error = "";
     } else {
+      market.valid = false;
       market.error = "Price JSON error";
     }
   } else {
+    market.valid = false;
     market.error = "Price request failed";
   }
 
@@ -418,22 +870,38 @@ void fetchNetworkData() {
 
   String response;
 
-  if (httpsGet("https://mempool.space/api/blocks/tip/height", response)) {
+  if (secureGet(
+        "https://mempool.space/api/blocks/tip/height",
+        response
+      )) {
     response.trim();
-    network.height = response.toInt();
-    network.heightValid = network.height > 0;
+
+    network.blockHeight =
+        static_cast<uint32_t>(response.toInt());
+
+    network.heightValid = network.blockHeight > 0;
+  } else {
+    network.heightValid = false;
   }
 
   response = "";
 
-  if (httpsGet("https://mempool.space/api/v1/fees/recommended", response)) {
+  if (secureGet(
+        "https://mempool.space/api/v1/fees/recommended",
+        response
+      )) {
     DynamicJsonDocument document(2048);
+
     if (!deserializeJson(document, response)) {
       network.fastestFee = document["fastestFee"] | 0;
       network.halfHourFee = document["halfHourFee"] | 0;
       network.hourFee = document["hourFee"] | 0;
       network.feesValid = true;
+    } else {
+      network.feesValid = false;
     }
+  } else {
+    network.feesValid = false;
   }
 
   lastNetworkMs = millis();
@@ -441,67 +909,49 @@ void fetchNetworkData() {
 }
 
 // -----------------------------------------------------------------------------
-// Optimized mining
+// Stable hashing workers
 // -----------------------------------------------------------------------------
 
 uint8_t leadingZeroBits(const uint8_t hash[32]) {
   uint8_t bits = 0;
 
-  for (int i = 0; i < 32; i++) {
-    if (hash[i] == 0) {
+  for (int index = 0; index < 32; index++) {
+    if (hash[index] == 0) {
       bits += 8;
       continue;
     }
 
-    uint8_t value = hash[i];
+    uint8_t value = hash[index];
+
     while ((value & 0x80) == 0) {
       bits++;
       value <<= 1;
     }
+
     break;
   }
 
   return bits;
 }
 
-double approximateDifficulty(const uint8_t hash[32]) {
-  uint64_t top = 0;
-
-  for (int i = 0; i < 8; i++) {
-    top = (top << 8) | hash[i];
-  }
-
-  if (top == 0) {
-    return 4294967296.0;
-  }
-
-  static const double difficultyOneTop =
-      static_cast<double>(0x00000000FFFF0000ULL);
-
-  return difficultyOneTop / static_cast<double>(top);
-}
-
-void refreshTemplate(uint8_t header[80], uint8_t workerId) {
-  for (int i = 0; i < 80; i++) {
-    header[i] = static_cast<uint8_t>(esp_random() & 0xFF);
-  }
-
-  header[0] ^= workerId;
-}
-
 void miningWorker(void* argument) {
-  uint8_t workerId = static_cast<uint8_t>(
-      reinterpret_cast<uintptr_t>(argument)
-  );
+  uint32_t workerId =
+      static_cast<uint32_t>(
+        reinterpret_cast<uintptr_t>(argument)
+      );
 
   uint8_t header[80];
-  uint8_t hash1[32];
-  uint8_t hash2[32];
+  uint8_t firstHash[32];
+  uint8_t secondHash[32];
 
-  refreshTemplate(header, workerId);
+  for (int index = 0; index < 80; index++) {
+    header[index] =
+        static_cast<uint8_t>(esp_random() & 0xFF);
+  }
+
+  header[0] ^= static_cast<uint8_t>(workerId);
 
   uint32_t nonce = workerId * 0x70000000UL;
-  uint64_t localTemplateHashes = 0;
 
   mbedtls_sha256_context context;
   mbedtls_sha256_init(&context);
@@ -513,11 +963,10 @@ void miningWorker(void* argument) {
     }
 
     uint32_t batchHashes = 0;
-    uint32_t batchShares32 = 0;
     uint8_t batchBestBits = 0;
-    double batchBestDifficulty = 0;
 
-    for (int batch = 0; batch < 1024; batch++) {
+    // Moderate batch size avoids starving Wi-Fi and the UI.
+    for (int batch = 0; batch < 256; batch++) {
       header[76] = nonce & 0xFF;
       header[77] = (nonce >> 8) & 0xFF;
       header[78] = (nonce >> 16) & 0xFF;
@@ -525,318 +974,104 @@ void miningWorker(void* argument) {
 
       mbedtls_sha256_starts_ret(&context, 0);
       mbedtls_sha256_update_ret(&context, header, 80);
-      mbedtls_sha256_finish_ret(&context, hash1);
+      mbedtls_sha256_finish_ret(&context, firstHash);
 
       mbedtls_sha256_starts_ret(&context, 0);
-      mbedtls_sha256_update_ret(&context, hash1, 32);
-      mbedtls_sha256_finish_ret(&context, hash2);
+      mbedtls_sha256_update_ret(&context, firstHash, 32);
+      mbedtls_sha256_finish_ret(&context, secondHash);
 
-      uint8_t bits = leadingZeroBits(hash2);
-      if (bits > batchBestBits) {
-        batchBestBits = bits;
-      }
+      uint8_t currentBits = leadingZeroBits(secondHash);
 
-      double difficulty = approximateDifficulty(hash2);
-      if (difficulty > batchBestDifficulty) {
-        batchBestDifficulty = difficulty;
-      }
-
-      if (hash2[0] == 0 &&
-          hash2[1] == 0 &&
-          hash2[2] == 0 &&
-          hash2[3] == 0) {
-        batchShares32++;
+      if (currentBits > batchBestBits) {
+        batchBestBits = currentBits;
       }
 
       nonce++;
       batchHashes++;
-      localTemplateHashes++;
-
-      if (localTemplateHashes >= TEMPLATE_HASH_LIMIT) {
-        refreshTemplate(header, workerId);
-        localTemplateHashes = 0;
-
-        portENTER_CRITICAL(&countersMux);
-        counters.templates++;
-        portEXIT_CRITICAL(&countersMux);
-      }
     }
 
-    portENTER_CRITICAL(&countersMux);
-    counters.totalHashes += batchHashes;
-    counters.windowHashes += batchHashes;
-    counters.currentNonce = nonce;
-    counters.shares32 += batchShares32;
+    portENTER_CRITICAL(&miningMux);
 
-    if (batchBestBits > counters.bestLeadingBits) {
-      counters.bestLeadingBits = batchBestBits;
+    sharedMining.totalHashes += batchHashes;
+    sharedMining.hashesWindow += batchHashes;
+    sharedMining.nonce = nonce;
+
+    if (batchBestBits > sharedMining.bestLeadingZeroBits) {
+      sharedMining.bestLeadingZeroBits = batchBestBits;
     }
 
-    if (batchBestDifficulty > counters.bestDifficulty) {
-      counters.bestDifficulty = batchBestDifficulty;
-    }
+    portEXIT_CRITICAL(&miningMux);
 
-    portEXIT_CRITICAL(&countersMux);
-
-    taskYIELD();
+    // Give the scheduler, Wi-Fi, and display time every batch.
+    vTaskDelay(1);
   }
 }
 
 void startMiningWorkers() {
-  counters.templates = 2;
-
   xTaskCreatePinnedToCore(
-      miningWorker,
-      "hash-worker-0",
-      6144,
-      reinterpret_cast<void*>(0),
-      1,
-      nullptr,
-      0
+    miningWorker,
+    "hash-worker-0",
+    6144,
+    reinterpret_cast<void*>(0),
+    1,
+    nullptr,
+    0
   );
 
   xTaskCreatePinnedToCore(
-      miningWorker,
-      "hash-worker-1",
-      6144,
-      reinterpret_cast<void*>(1),
-      1,
-      nullptr,
-      1
+    miningWorker,
+    "hash-worker-1",
+    6144,
+    reinterpret_cast<void*>(1),
+    1,
+    nullptr,
+    1
   );
 
   miningEnabled = true;
 }
 
 void sampleMiningStats() {
-  uint32_t hashesInWindow = 0;
+  uint32_t hashesThisWindow = 0;
 
-  portENTER_CRITICAL(&countersMux);
+  portENTER_CRITICAL(&miningMux);
 
-  mining.totalHashes = counters.totalHashes;
-  mining.currentNonce = counters.currentNonce;
-  mining.templates = counters.templates;
-  mining.shares32 = counters.shares32;
-  mining.validBlocks = counters.validBlocks;
-  mining.bestLeadingBits = counters.bestLeadingBits;
-  mining.bestDifficulty = counters.bestDifficulty;
+  mining.totalHashes = sharedMining.totalHashes;
+  mining.nonce = sharedMining.nonce;
+  mining.bestLeadingZeroBits =
+      sharedMining.bestLeadingZeroBits;
 
-  hashesInWindow = counters.windowHashes;
-  counters.windowHashes = 0;
+  hashesThisWindow = sharedMining.hashesWindow;
+  sharedMining.hashesWindow = 0;
 
-  portEXIT_CRITICAL(&countersMux);
+  portEXIT_CRITICAL(&miningMux);
 
-  float seconds = UI_INTERVAL_MS / 1000.0f;
-  mining.currentKHs = hashesInWindow / seconds / 1000.0f;
+  mining.currentKHs =
+      hashesThisWindow /
+      (STATS_INTERVAL_MS / 1000.0f) /
+      1000.0f;
 
   if (mining.smoothKHs < 0.01f) {
     mining.smoothKHs = mining.currentKHs;
   } else {
     mining.smoothKHs =
-        mining.smoothKHs * 0.70f +
-        mining.currentKHs * 0.30f;
+        mining.smoothKHs * 0.72f +
+        mining.currentKHs * 0.28f;
   }
 }
 
 // -----------------------------------------------------------------------------
-// Pages
+// Page switching and button
 // -----------------------------------------------------------------------------
 
-void drawDashboard() {
-  tft.fillScreen(C_BG);
-  header("NERD-STYLE MINER", minerName);
+void goToNextPage() {
+  int next =
+      (static_cast<int>(currentPage) + 1) %
+      PAGE_COUNT;
 
-  // Large speed card
-  panel(8, 39, 151, 76, C_ORANGE);
-  textLeft(String(mining.smoothKHs, 2), 16, 52,
-           C_BG, C_ORANGE, 4);
-  textLeft("kH/s", 111, 82, C_BG, C_ORANGE, 2);
-  textLeft("REAL LOCAL HASHRATE", 16, 100,
-           C_BG, C_ORANGE, 1);
-
-  // Upper-right statistics
-  panel(166, 39, 146, 76);
-  textLeft("BLOCK TEMPLATES", 176, 47, C_MUTED, C_PANEL, 1);
-  textLeft(String(mining.templates), 281, 46, C_CYAN, C_PANEL, 2);
-
-  textLeft("BEST DIFFICULTY", 176, 65, C_MUTED, C_PANEL, 1);
-  textLeft(difficultyText(mining.bestDifficulty),
-           251, 64, C_YELLOW, C_PANEL, 2);
-
-  textLeft("32-BIT SHARES", 176, 83, C_MUTED, C_PANEL, 1);
-  textLeft(String(mining.shares32), 290, 82, C_GREEN, C_PANEL, 2);
-
-  textLeft("VALID BLOCKS", 176, 101, C_MUTED, C_PANEL, 1);
-  textLeft(String(mining.validBlocks), 290, 100, C_RED, C_PANEL, 2);
-
-  // Uptime / total
-  panel(8, 122, 304, 35);
-  textLeft("UPTIME", 17, 131, C_MUTED, C_PANEL, 1);
-  textLeft(uptimeText(), 65, 128, C_TEXT, C_PANEL, 2);
-
-  textLeft("TOTAL", 204, 131, C_MUTED, C_PANEL, 1);
-  textLeft(compactNumber(mining.totalHashes),
-           243, 128, C_ORANGE, C_PANEL, 2);
-
-  // Bottom three boxes
-  statBox(8, 164, 97, 45,
-          "BEST ZERO BITS",
-          String(mining.bestLeadingBits),
-          C_YELLOW);
-
-  statBox(111, 164, 97, 45,
-          "WORKERS",
-          "2",
-          C_GREEN);
-
-  statBox(214, 164, 98, 45,
-          "BLOCK HEIGHT",
-          network.heightValid ? String(network.height) : "--",
-          C_PURPLE);
-
-  footer();
-}
-
-void drawHashratePage() {
-  tft.fillScreen(C_BG);
-  header("HASHRATE", "DUAL-CORE ENGINE");
-
-  textCenter(String(mining.smoothKHs, 2), 160, 90,
-             C_ORANGE, C_BG, 6);
-  textCenter("kH/s", 160, 130, C_TEXT, C_BG, 4);
-
-  panel(18, 154, 284, 49);
-  textLeft("Current", 31, 164, C_MUTED, C_PANEL, 1);
-  textLeft(String(mining.currentKHs, 2) + " kH/s",
-           31, 179, C_CYAN, C_PANEL, 2);
-
-  textLeft("Nonce", 185, 164, C_MUTED, C_PANEL, 1);
-  char nonceText[16];
-  snprintf(nonceText, sizeof(nonceText), "%08lX",
-           (unsigned long)mining.currentNonce);
-  textLeft(String(nonceText), 185, 179, C_TEXT, C_PANEL, 2);
-
-  footer();
-}
-
-void drawMarketPage() {
-  tft.fillScreen(C_BG);
-  header("BITCOIN MARKET", "LIVE COINGECKO DATA");
-
-  panel(10, 43, 300, 70);
-
-  textLeft("BTC / USD", 21, 51, C_MUTED, C_PANEL, 1);
-
-  String priceText =
-      market.valid ? "$" + String(market.price, 0) : "Loading...";
-
-  textLeft(priceText, 21, 67, C_ORANGE, C_PANEL, 4);
-
-  if (market.valid) {
-    uint16_t color =
-        market.change24h >= 0 ? C_GREEN : C_RED;
-
-    String change =
-        String(market.change24h >= 0 ? "+" : "") +
-        String(market.change24h, 2) + "%";
-
-    textCenter(change, 266, 78, color, C_PANEL, 2);
-  }
-
-  panel(10, 122, 300, 84);
-
-  textCenter("NETWORK SNAPSHOT", 160, 136,
-             C_MUTED, C_PANEL, 1);
-
-  textCenter(
-      network.heightValid ? String(network.height) : "--",
-      65, 164, C_PURPLE, C_PANEL, 2
-  );
-  textCenter("BLOCK", 65, 190, C_MUTED, C_PANEL, 1);
-
-  textCenter(
-      network.feesValid
-          ? String(network.fastestFee) + " sat/vB"
-          : "--",
-      160, 164, C_ORANGE, C_PANEL, 2
-  );
-  textCenter("FAST FEE", 160, 190, C_MUTED, C_PANEL, 1);
-
-  textCenter(
-      WiFi.status() == WL_CONNECTED
-          ? String(WiFi.RSSI()) + " dBm"
-          : "--",
-      255, 164, C_GREEN, C_PANEL, 2
-  );
-  textCenter("WI-FI", 255, 190, C_MUTED, C_PANEL, 1);
-
-  footer();
-}
-
-void drawSystemPage() {
-  tft.fillScreen(C_BG);
-  header("SYSTEM", "ESP32-2432S028R");
-
-  statBox(10, 43, 145, 50,
-          "CPU",
-          String(ESP.getCpuFreqMHz()) + " MHz",
-          C_ORANGE);
-
-  statBox(165, 43, 145, 50,
-          "FREE HEAP",
-          compactNumber(ESP.getFreeHeap()),
-          C_CYAN);
-
-  statBox(10, 101, 145, 50,
-          "FLASH",
-          String(ESP.getFlashChipSize() / 1024 / 1024) + " MB",
-          C_PURPLE);
-
-  statBox(165, 101, 145, 50,
-          "CORES",
-          String(ESP.getChipCores()),
-          C_GREEN);
-
-  panel(10, 159, 300, 48);
-  textLeft("Wi-Fi", 21, 168, C_MUTED, C_PANEL, 1);
-  textLeft(WiFi.SSID(), 21, 184, C_TEXT, C_PANEL, 2);
-
-  textLeft("Hold BOOT", 218, 168, C_MUTED, C_PANEL, 1);
-  textLeft("Wi-Fi reset", 218, 184, C_ORANGE, C_PANEL, 1);
-
-  footer();
-}
-
-void drawPage() {
-  switch (page) {
-    case Page::DASHBOARD:
-      drawDashboard();
-      break;
-
-    case Page::HASHRATE:
-      drawHashratePage();
-      break;
-
-    case Page::MARKET:
-      drawMarketPage();
-      break;
-
-    case Page::SYSTEM:
-      drawSystemPage();
-      break;
-  }
-
-  screenDirty = false;
-}
-
-// -----------------------------------------------------------------------------
-// Controls and runtime
-// -----------------------------------------------------------------------------
-
-void nextPage() {
-  int next = (static_cast<int>(page) + 1) % 4;
-  page = static_cast<Page>(next);
-  screenDirty = true;
+  currentPage = static_cast<Page>(next);
+  layoutDrawn = false;
+  lastPageMs = millis();
 }
 
 void handleButton() {
@@ -858,26 +1093,42 @@ void handleButton() {
     lastButtonMs = millis();
 
     if (duration >= BUTTON_LONG_PRESS_MS) {
-      reopenWifiSetup();
+      resetWifi();
     } else {
-      nextPage();
+      goToNextPage();
     }
   }
 }
 
-void maintainData() {
+void handleAutomaticPageChange() {
+  if (millis() - lastPageMs >= PAGE_INTERVAL_MS) {
+    goToNextPage();
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Scheduled data
+// -----------------------------------------------------------------------------
+
+void maintainPublicData() {
   if (WiFi.status() != WL_CONNECTED) {
     return;
   }
 
   if (millis() - lastMarketMs >= MARKET_INTERVAL_MS) {
-    fetchBitcoinPrice();
-    screenDirty = true;
+    fetchMarketData();
+
+    if (currentPage == Page::MARKET) {
+      updateMarketValues();
+    }
   }
 
   if (millis() - lastNetworkMs >= NETWORK_INTERVAL_MS) {
     fetchNetworkData();
-    screenDirty = true;
+
+    if (currentPage == Page::NETWORK) {
+      updateNetworkValues();
+    }
   }
 }
 
@@ -898,35 +1149,39 @@ void setup() {
   tft.setRotation(1);
   tft.fillScreen(C_BG);
 
-  setupWifi();
+  configureWifi();
 
   startMiningWorkers();
 
-  drawDashboard();
+  currentPage = Page::MINER;
+  lastPageMs = millis();
 
+  drawCurrentLayout();
+  updateCurrentPageValues();
+
+  // Load factual network data after the first screen is visible.
   fetchNetworkData();
-  fetchBitcoinPrice();
+  fetchMarketData();
 
-  screenDirty = true;
+  updateCurrentPageValues();
 }
 
 void loop() {
   handleButton();
-  maintainData();
+  handleAutomaticPageChange();
+  maintainPublicData();
 
-  if (millis() - lastUiMs >= UI_INTERVAL_MS) {
-    lastUiMs = millis();
-    sampleMiningStats();
-
-    if (page == Page::DASHBOARD ||
-        page == Page::HASHRATE ||
-        page == Page::SYSTEM) {
-      screenDirty = true;
-    }
+  if (!layoutDrawn) {
+    drawCurrentLayout();
+    updateCurrentPageValues();
   }
 
-  if (screenDirty) {
-    drawPage();
+  if (millis() - lastStatsMs >= STATS_INTERVAL_MS) {
+    lastStatsMs = millis();
+    sampleMiningStats();
+
+    // Only repaint the small number regions.
+    updateCurrentPageValues();
   }
 
   delay(2);
