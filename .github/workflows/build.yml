@@ -1,0 +1,55 @@
+name: Build CYD Bitcoin Miner
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "CYD-Bitcoin-Miner/**"
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: CYD-Bitcoin-Miner
+
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v4
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Compile firmware
+        run: pio run -e cyd
+
+      - name: Find boot application
+        id: bootapp
+        run: |
+          BOOT_APP=$(find ~/.platformio -name boot_app0.bin | head -n 1)
+          echo "path=$BOOT_APP" >> "$GITHUB_OUTPUT"
+          echo "Found boot app: $BOOT_APP"
+
+      - name: Create one complete BIN
+        run: |
+          python -m esptool \
+            --chip esp32 \
+            merge-bin \
+            -o CYD_Bitcoin_Miner_Complete.bin \
+            --flash-mode dio \
+            --flash-size 4MB \
+            0x1000 .pio/build/cyd/bootloader.bin \
+            0x8000 .pio/build/cyd/partitions.bin \
+            0xe000 "${{ steps.bootapp.outputs.path }}" \
+            0x10000 .pio/build/cyd/firmware.bin
+
+      - name: Upload finished firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: CYD-Bitcoin-Miner
+          path: CYD-Bitcoin-Miner/CYD_Bitcoin_Miner_Complete.bin
+          if-no-files-found: error
