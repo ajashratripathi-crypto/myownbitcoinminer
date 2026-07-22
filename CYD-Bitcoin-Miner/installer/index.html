@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#080b12" />
-  <meta name="description" content="Install CYD Bitcoin Lab firmware from your browser." />
-  <title>CYD Bitcoin Lab — Premium Installer</title>
+  <meta name="theme-color" content="#070910" />
+  <meta name="description" content="Install and monitor CYD Bitcoin Lab Pool Edition." />
+  <title>CYD Bitcoin Lab — Pool Edition</title>
 
   <script type="module"
     src="https://unpkg.com/esp-web-tools@10.1.1/dist/web/install-button.js?module">
@@ -13,943 +13,296 @@
 
   <style>
     :root {
-      --bg: #070910;
-      --surface: rgba(18, 22, 34, .74);
-      --surface-strong: #111624;
-      --surface-soft: rgba(255,255,255,.045);
-      --border: rgba(255,255,255,.11);
-      --text: #f7f9ff;
-      --muted: #98a2b8;
-      --orange: #ff991f;
-      --orange-2: #ffb14d;
-      --cyan: #35d8ff;
-      --green: #28e09b;
-      --red: #ff5a6a;
-      --shadow: 0 25px 80px rgba(0,0,0,.42);
-      --radius-lg: 20px;
-
-      --esp-tools-button-color: #ff991f;
-      --esp-tools-button-text-color: #080b12;
-      --esp-tools-button-border-radius: 14px;
+      --bg:#06080d;
+      --surface:rgba(17,22,34,.78);
+      --surface2:#111725;
+      --border:rgba(255,255,255,.11);
+      --text:#f7f9ff;
+      --muted:#97a2b8;
+      --orange:#ff991f;
+      --orange2:#ffc15c;
+      --cyan:#35d8ff;
+      --green:#28e09b;
+      --red:#ff5a6a;
+      --yellow:#ffd166;
+      --purple:#b779ff;
+      --shadow:0 28px 85px rgba(0,0,0,.46);
+      --esp-tools-button-color:#ff991f;
+      --esp-tools-button-text-color:#080b12;
+      --esp-tools-button-border-radius:14px;
     }
 
-    * { box-sizing: border-box; }
-
-    html { scroll-behavior: smooth; }
-
-    body {
-      margin: 0;
-      min-height: 100vh;
-      color: var(--text);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-                   "Segoe UI", sans-serif;
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      margin:0;
+      min-height:100vh;
+      color:var(--text);
+      font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
       background:
-        radial-gradient(circle at 12% -10%, rgba(255,153,31,.19), transparent 36%),
-        radial-gradient(circle at 90% 6%, rgba(53,216,255,.13), transparent 32%),
-        linear-gradient(180deg, #080a11 0%, #05070c 100%);
-      overflow-x: hidden;
+        radial-gradient(circle at 12% -8%,rgba(255,153,31,.2),transparent 34%),
+        radial-gradient(circle at 92% 2%,rgba(53,216,255,.14),transparent 30%),
+        linear-gradient(180deg,#080a11,#05070c);
+      overflow-x:hidden;
     }
 
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      opacity: .22;
+    body::before{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      opacity:.18;
       background-image:
-        linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
-      background-size: 36px 36px;
-      mask-image: linear-gradient(to bottom, black, transparent 84%);
-    }
-
-    a { color: inherit; }
-
-    button, .button {
-      font: inherit;
-    }
-
-    .shell {
-      width: min(1180px, calc(100% - 32px));
-      margin: 0 auto;
-      position: relative;
-      z-index: 1;
-    }
-
-    nav {
-      height: 76px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-weight: 850;
-      letter-spacing: -.03em;
-    }
-
-    .coin {
-      width: 38px;
-      height: 38px;
-      display: grid;
-      place-items: center;
-      border-radius: 50%;
-      color: #121212;
-      background: linear-gradient(145deg, #ffc26c, #ff8a00);
-      box-shadow: 0 0 35px rgba(255,153,31,.35);
-      font-weight: 950;
-    }
-
-    .nav-links {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-    }
-
-    .nav-links a {
-      text-decoration: none;
-      color: var(--muted);
-      padding: 10px 13px;
-      border-radius: 10px;
-      transition: .2s ease;
-    }
-
-    .nav-links a:hover {
-      color: var(--text);
-      background: var(--surface-soft);
-    }
-
-    .hero {
-      min-height: 610px;
-      display: grid;
-      grid-template-columns: 1.05fr .95fr;
-      align-items: center;
-      gap: 58px;
-      padding: 60px 0 90px;
-    }
-
-    .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 9px;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 8px 12px;
-      color: var(--muted);
-      background: rgba(255,255,255,.035);
-      backdrop-filter: blur(14px);
-      font-size: 13px;
-    }
-
-    .pulse {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 16px var(--green);
-      animation: pulse 1.8s infinite;
-    }
-
-    @keyframes pulse {
-      0%,100% { transform: scale(.8); opacity:.65; }
-      50% { transform: scale(1.2); opacity:1; }
-    }
-
-    h1 {
-      margin: 24px 0 18px;
-      max-width: 720px;
-      font-size: clamp(48px, 7vw, 88px);
-      line-height: .96;
-      letter-spacing: -.065em;
-    }
-
-    .gradient-text {
-      color: transparent;
-      background: linear-gradient(100deg, var(--orange-2), var(--orange), var(--cyan));
-      background-clip: text;
-      -webkit-background-clip: text;
-    }
-
-    .lead {
-      max-width: 680px;
-      margin: 0;
-      font-size: clamp(17px, 2vw, 21px);
-      line-height: 1.65;
-      color: var(--muted);
-    }
-
-    .hero-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-top: 30px;
-    }
-
-    .primary, .secondary {
-      border: 0;
-      border-radius: 14px;
-      min-height: 52px;
-      padding: 0 20px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      cursor: pointer;
-      text-decoration: none;
-      transition: transform .18s ease, filter .18s ease;
-      font-weight: 800;
-    }
-
-    .primary {
-      color: #080b12;
-      background: linear-gradient(135deg, #ffc05c, var(--orange));
-      box-shadow: 0 12px 35px rgba(255,153,31,.25);
-    }
-
-    .secondary {
-      color: var(--text);
-      background: rgba(255,255,255,.055);
-      border: 1px solid var(--border);
-    }
-
-    .primary:hover, .secondary:hover {
-      transform: translateY(-2px);
-      filter: brightness(1.08);
-    }
-
-    .device-stage {
-      position: relative;
-      min-height: 420px;
-      display: grid;
-      place-items: center;
-    }
-
-    .halo {
-      position: absolute;
-      width: 360px;
-      height: 360px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(255,153,31,.28), transparent 67%);
-      filter: blur(10px);
-      animation: breathe 4s ease-in-out infinite;
-    }
-
-    @keyframes breathe {
-      0%,100% { transform: scale(.92); opacity:.65; }
-      50% { transform: scale(1.07); opacity:1; }
-    }
-
-    .device {
-      width: min(430px, 92vw);
-      aspect-ratio: 1.48;
-      position: relative;
-      transform: perspective(900px) rotateY(-7deg) rotateX(3deg);
-      border-radius: 22px;
-      padding: 18px;
-      background:
-        linear-gradient(145deg, rgba(255,255,255,.15), rgba(255,255,255,.035));
-      border: 1px solid rgba(255,255,255,.24);
-      box-shadow: var(--shadow), inset 0 0 0 1px rgba(255,255,255,.06);
-      backdrop-filter: blur(18px);
-    }
-
-    .screen {
-      height: 100%;
-      overflow: hidden;
-      border-radius: 12px;
-      border: 1px solid rgba(255,255,255,.12);
-      background:
-        radial-gradient(circle at 85% 0%, rgba(53,216,255,.12), transparent 28%),
-        #06080d;
-      padding: 14px;
-      position: relative;
-    }
-
-    .screen-top {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid rgba(255,255,255,.09);
-    }
-
-    .screen-title {
-      font-size: 15px;
-      font-weight: 850;
-    }
-
-    .screen-live {
-      font-size: 10px;
-      color: var(--green);
-      letter-spacing: .12em;
-    }
-
-    .hash-card {
-      margin-top: 12px;
-      border-radius: 12px;
-      padding: 12px;
-      background: linear-gradient(135deg, rgba(255,153,31,.95), rgba(255,181,80,.92));
-      color: #0b0d12;
-    }
-
-    .hash-card small {
-      font-size: 9px;
-      font-weight: 800;
-      letter-spacing: .13em;
-    }
-
-    .hash-value {
-      font-size: 39px;
-      line-height: 1;
-      font-weight: 950;
-      letter-spacing: -.06em;
-      margin-top: 6px;
-    }
-
-    .mini-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-      margin-top: 10px;
-    }
-
-    .mini-card {
-      border: 1px solid rgba(255,255,255,.08);
-      background: rgba(255,255,255,.045);
-      padding: 9px;
-      border-radius: 10px;
-    }
-
-    .mini-card small {
-      color: var(--muted);
-      font-size: 8px;
-      display: block;
-      margin-bottom: 5px;
-    }
-
-    .mini-card strong {
-      font-size: 13px;
-    }
-
-    .sparkline {
-      width: 100%;
-      height: 46px;
-      margin-top: 10px;
-    }
-
-    .section {
-      padding: 88px 0;
-    }
-
-    .section-heading {
-      max-width: 760px;
-      margin-bottom: 30px;
-    }
-
-    .section-heading h2 {
-      margin: 0 0 12px;
-      font-size: clamp(34px, 5vw, 58px);
-      letter-spacing: -.045em;
-    }
-
-    .section-heading p {
-      color: var(--muted);
-      line-height: 1.65;
-      font-size: 18px;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(12, 1fr);
-      gap: 16px;
-    }
-
-    .card {
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      background: var(--surface);
-      box-shadow: 0 18px 55px rgba(0,0,0,.22);
-      backdrop-filter: blur(18px);
-    }
-
-    .feature {
-      grid-column: span 4;
-      padding: 24px;
-      min-height: 200px;
-    }
-
-    .feature-icon {
-      width: 44px;
-      height: 44px;
-      display: grid;
-      place-items: center;
-      border-radius: 12px;
-      color: var(--orange);
-      background: rgba(255,153,31,.11);
-      border: 1px solid rgba(255,153,31,.2);
-      font-size: 22px;
-    }
-
-    .feature h3 {
-      margin: 22px 0 9px;
-      font-size: 20px;
-    }
-
-    .feature p {
-      margin: 0;
-      color: var(--muted);
-      line-height: 1.55;
-    }
-
-    .installer-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 18px;
-      align-items: stretch;
-    }
-
-    .install-card, .coming-card {
-      padding: 26px;
-    }
-
-    .card-title {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 18px;
-    }
-
-    .card-title h3 {
-      margin: 0;
-      font-size: 23px;
-    }
-
-    .badge {
-      padding: 7px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 12px;
-      white-space: nowrap;
-    }
-
-    .checks {
-      display: grid;
-      gap: 10px;
-      margin: 22px 0;
-    }
-
-    .check {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 13px 14px;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: rgba(255,255,255,.025);
-    }
-
-    .check-left {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .status-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      background: var(--muted);
-    }
-
-    .status-dot.ok {
-      background: var(--green);
-      box-shadow: 0 0 12px rgba(40,224,155,.5);
-    }
-
-    .status-dot.bad {
-      background: var(--red);
-      box-shadow: 0 0 12px rgba(255,90,106,.45);
-    }
-
-    .status-text {
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    .note {
-      margin-top: 14px;
-      border-left: 3px solid var(--orange);
-      padding: 11px 13px;
-      color: var(--muted);
-      background: rgba(255,153,31,.06);
-      border-radius: 0 10px 10px 0;
-      line-height: 1.5;
-      font-size: 14px;
-    }
-
-    .coming-card {
-      position: relative;
-      overflow: hidden;
-      min-height: 430px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    }
-
-    .coming-card::before {
-      content: "";
-      position: absolute;
-      width: 260px;
-      height: 260px;
-      right: -80px;
-      top: -80px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(53,216,255,.2), transparent 68%);
-    }
-
-    .coming-icon {
-      width: 72px;
-      height: 72px;
-      display: grid;
-      place-items: center;
-      border-radius: 20px;
-      color: var(--cyan);
-      background: rgba(53,216,255,.09);
-      border: 1px solid rgba(53,216,255,.22);
-      font-size: 32px;
-      margin-bottom: 24px;
-    }
-
-    .coming-card h3 {
-      margin: 0 0 12px;
-      font-size: 34px;
-      letter-spacing: -.035em;
-    }
-
-    .coming-card p {
-      margin: 0;
-      color: var(--muted);
-      line-height: 1.65;
-      font-size: 17px;
-      max-width: 520px;
-    }
-
-    .coming-list {
-      display: grid;
-      gap: 10px;
-      margin: 24px 0 0;
-    }
-
-    .coming-item {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      color: var(--muted);
-    }
-
-    .coming-item span:first-child {
-      color: var(--cyan);
-    }
-
-    footer {
-      padding: 34px 0 60px;
-      color: var(--muted);
-      border-top: 1px solid var(--border);
-      margin-top: 60px;
-    }
-
-    @media (max-width: 900px) {
-      .hero,
-      .installer-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .hero {
-        padding-top: 30px;
-      }
-
-      .device-stage {
-        min-height: 360px;
-      }
-
-      .feature {
-        grid-column: span 6;
-      }
-    }
-
-    @media (max-width: 640px) {
-      .shell {
-        width: min(100% - 20px, 1180px);
-      }
-
-      nav {
-        height: 66px;
-      }
-
-      .nav-links {
-        display: none;
-      }
-
-      .hero {
-        padding-bottom: 50px;
-        gap: 20px;
-      }
-
-      h1 {
-        font-size: 53px;
-      }
-
-      .device {
-        transform: none;
-      }
-
-      .feature {
-        grid-column: 1 / -1;
-      }
-
-      .install-card, .coming-card {
-        padding: 18px;
-      }
-
-      .primary, .secondary {
-        width: 100%;
-      }
-    }
+        linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
+      background-size:38px 38px;
+      mask-image:linear-gradient(to bottom,black,transparent 88%);
+    }
+
+    button,a{font:inherit}
+    .shell{width:min(1200px,calc(100% - 30px));margin:auto;position:relative;z-index:1}
+
+    nav{height:74px;display:flex;align-items:center;justify-content:space-between;gap:18px}
+    .brand{display:flex;align-items:center;gap:12px;font-weight:900;letter-spacing:-.035em}
+    .coin{width:39px;height:39px;border-radius:50%;display:grid;place-items:center;color:#111;background:linear-gradient(145deg,#ffd080,#ff8b00);box-shadow:0 0 35px rgba(255,153,31,.35);font-weight:950}
+    .navlinks{display:flex;gap:8px}
+    .navlinks a{padding:9px 12px;text-decoration:none;color:var(--muted);border-radius:10px}
+    .navlinks a:hover{color:var(--text);background:rgba(255,255,255,.05)}
+
+    .hero{min-height:560px;display:grid;grid-template-columns:1.06fr .94fr;gap:50px;align-items:center;padding:58px 0 76px}
+    .eyebrow{display:inline-flex;align-items:center;gap:9px;padding:8px 12px;border-radius:999px;border:1px solid var(--border);color:var(--muted);background:rgba(255,255,255,.035);font-size:13px}
+    .pulse{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 15px var(--green);animation:pulse 1.8s infinite}
+    @keyframes pulse{0%,100%{opacity:.6;transform:scale(.8)}50%{opacity:1;transform:scale(1.2)}}
+
+    h1{margin:22px 0 18px;font-size:clamp(48px,7vw,86px);line-height:.96;letter-spacing:-.065em}
+    .gradient{color:transparent;background:linear-gradient(100deg,var(--orange2),var(--orange),var(--cyan));background-clip:text;-webkit-background-clip:text}
+    .lead{margin:0;max-width:680px;color:var(--muted);font-size:clamp(17px,2vw,21px);line-height:1.62}
+    .actions{display:flex;flex-wrap:wrap;gap:11px;margin-top:28px}
+
+    .primary,.secondary,.danger{
+      min-height:51px;padding:0 19px;border-radius:14px;border:0;display:inline-flex;align-items:center;justify-content:center;gap:9px;text-decoration:none;font-weight:850;cursor:pointer;transition:.18s ease
+    }
+    .primary{color:#080b12;background:linear-gradient(135deg,#ffc15f,var(--orange));box-shadow:0 13px 34px rgba(255,153,31,.24)}
+    .secondary{color:var(--text);background:rgba(255,255,255,.055);border:1px solid var(--border)}
+    .danger{color:#fff;background:rgba(255,90,106,.13);border:1px solid rgba(255,90,106,.34)}
+    .primary:hover,.secondary:hover,.danger:hover{transform:translateY(-2px);filter:brightness(1.08)}
+
+    .device-wrap{position:relative;display:grid;place-items:center;min-height:390px}
+    .halo{position:absolute;width:350px;height:350px;border-radius:50%;background:radial-gradient(circle,rgba(255,153,31,.25),transparent 68%);filter:blur(10px)}
+    .device{width:min(430px,92vw);aspect-ratio:1.48;padding:17px;border-radius:23px;border:1px solid rgba(255,255,255,.23);background:linear-gradient(145deg,rgba(255,255,255,.15),rgba(255,255,255,.035));box-shadow:var(--shadow);transform:perspective(900px) rotateY(-6deg) rotateX(3deg)}
+    .screen{height:100%;border-radius:12px;border:1px solid rgba(255,255,255,.1);background:#05070b;padding:13px;overflow:hidden}
+    .screenhead{display:flex;justify-content:space-between;align-items:center;padding-bottom:9px;border-bottom:1px solid rgba(255,255,255,.08);font-size:13px;font-weight:850}
+    .live{font-size:9px;color:var(--green);letter-spacing:.12em}
+    .speed{margin-top:11px;padding:12px;border-radius:12px;color:#080b12;background:linear-gradient(135deg,#ffb44b,var(--orange))}
+    .speed small{font-size:8px;letter-spacing:.13em;font-weight:900}
+    .speed strong{display:block;font-size:38px;line-height:1;margin-top:5px;letter-spacing:-.06em}
+    .minigrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:9px}
+    .mini{padding:9px;border:1px solid rgba(255,255,255,.08);border-radius:9px;background:rgba(255,255,255,.045)}
+    .mini small{display:block;color:var(--muted);font-size:8px;margin-bottom:4px}.mini b{font-size:13px}
+    .line{width:100%;height:43px;margin-top:8px}
+
+    section{padding:82px 0}.heading{max-width:780px;margin-bottom:26px}.heading h2{margin:0 0 10px;font-size:clamp(34px,5vw,56px);letter-spacing:-.045em}.heading p{margin:0;color:var(--muted);font-size:18px;line-height:1.62}
+    .card{border:1px solid var(--border);border-radius:21px;background:var(--surface);backdrop-filter:blur(18px);box-shadow:0 18px 55px rgba(0,0,0,.23)}
+    .twocol{display:grid;grid-template-columns:.85fr 1.15fr;gap:17px}
+    .install,.dashboard{padding:24px}
+    .cardtitle{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:18px}.cardtitle h3{margin:0;font-size:23px}.badge{padding:7px 10px;border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:12px;white-space:nowrap}
+
+    .checks{display:grid;gap:9px;margin:19px 0}.check{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 13px;border-radius:12px;border:1px solid var(--border);background:rgba(255,255,255,.025)}.checkleft{display:flex;align-items:center;gap:10px}.dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}.dot.ok{background:var(--green);box-shadow:0 0 12px rgba(40,224,155,.48)}.dot.bad{background:var(--red)}.check small{color:var(--muted)}
+    .note{margin-top:13px;padding:11px 13px;border-left:3px solid var(--orange);border-radius:0 10px 10px 0;background:rgba(255,153,31,.06);color:var(--muted);font-size:14px;line-height:1.5}
+
+    .connectrow{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:15px}.hidden{display:none!important}
+    .statusline{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:13px;margin-bottom:14px}.statuslight{width:10px;height:10px;border-radius:50%;background:var(--red)}.statuslight.connected{background:var(--green);box-shadow:0 0 15px rgba(40,224,155,.5)}
+    .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{padding:13px;border-radius:13px;border:1px solid var(--border);background:rgba(255,255,255,.028);min-width:0}.metric small{display:block;color:var(--muted);font-size:10px;letter-spacing:.06em;margin-bottom:7px}.metric strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:20px}.metric.hot strong{color:var(--orange)}.metric.good strong{color:var(--green)}.metric.bad strong{color:var(--red)}.metric.cool strong{color:var(--cyan)}
+    .chartcard{margin-top:12px;padding:12px;border-radius:14px;border:1px solid var(--border);background:#04060a}.charthead{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:12px;margin-bottom:8px}canvas{display:block;width:100%;height:155px}
+    .details{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:11px}.detail{padding:11px;border:1px solid var(--border);border-radius:12px;color:var(--muted);font-size:12px}.detail b{display:block;color:var(--text);margin-top:4px;font-size:14px}
+    .console{height:155px;margin-top:12px;padding:12px;border-radius:13px;border:1px solid rgba(53,216,255,.15);background:#020407;color:#a9f3ff;overflow:auto;white-space:pre-wrap;word-break:break-word;font:11px/1.45 "SFMono-Regular",Consolas,monospace}
+
+    footer{margin-top:56px;padding:32px 0 58px;border-top:1px solid var(--border);color:var(--muted)}
+
+    @media(max-width:930px){.hero,.twocol{grid-template-columns:1fr}.hero{padding-top:30px}.metrics{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:650px){.shell{width:min(100% - 20px,1200px)}.navlinks{display:none}.hero{gap:18px;padding-bottom:45px}h1{font-size:52px}.device{transform:none}.install,.dashboard{padding:17px}.metrics,.details{grid-template-columns:1fr 1fr}.primary,.secondary,.danger{width:100%}}
   </style>
 </head>
-
 <body>
   <div class="shell">
     <nav>
-      <div class="brand">
-        <div class="coin">₿</div>
-        <span>CYD Bitcoin Lab</span>
-      </div>
-
-      <div class="nav-links">
-        <a href="#features">Features</a>
-        <a href="#installer">Installer</a>
-        <a href="#diagnostics">Diagnostics</a>
-      </div>
+      <div class="brand"><span class="coin">₿</span><span>CYD Bitcoin Lab</span></div>
+      <div class="navlinks"><a href="#install">Installer</a><a href="#viewer">Pool Viewer</a><a href="#setup">Setup</a></div>
     </nav>
 
     <main>
-      <section class="hero">
+      <div class="hero">
         <div>
-          <div class="eyebrow">
-            <span class="pulse"></span>
-            ESP32-2432S028R • Premium firmware experience
-          </div>
-
-          <h1>
-            Your CYD,
-            <span class="gradient-text">upgraded.</span>
-          </h1>
-
-          <p class="lead">
-            Install CYD Bitcoin Lab from a polished browser interface with
-            automatic compatibility checks and a premium product-style design.
-          </p>
-
-          <div class="hero-actions">
+          <div class="eyebrow"><span class="pulse"></span>V9 Pool Edition • OCEAN + weather + live viewer</div>
+          <h1>Mine, monitor, and <span class="gradient">explore.</span></h1>
+          <p class="lead">A polished browser home for your ESP32 CYD: one-click firmware installation and a live USB pool dashboard that does not reflash the device.</p>
+          <div class="actions">
             <esp-web-install-button manifest="manifest.json">
-              <button class="primary" slot="activate">⚡ Install firmware</button>
-              <span slot="unsupported">Use Chrome or Microsoft Edge on desktop.</span>
-              <span slot="not-allowed">Firmware installation requires HTTPS.</span>
+              <button class="primary" slot="activate">⚡ Install Pool Edition</button>
+              <span slot="unsupported">Use desktop Chrome or Microsoft Edge.</span>
+              <span slot="not-allowed">Installation requires HTTPS.</span>
             </esp-web-install-button>
-
-            <a class="secondary"
-               href="firmware/CYD_Bitcoin_Miner_Complete.bin"
-               download>
-              ↓ Download BIN
-            </a>
-
-            <a class="secondary" href="#diagnostics">
-              ◉ Live diagnostics
-            </a>
+            <a class="secondary" href="#viewer">◉ Open live viewer</a>
+            <a class="secondary" href="firmware/CYD_Bitcoin_Miner_Complete.bin" download>↓ Download BIN</a>
           </div>
         </div>
 
-        <div class="device-stage">
+        <div class="device-wrap">
           <div class="halo"></div>
-
           <div class="device">
             <div class="screen">
-              <div class="screen-top">
-                <div class="screen-title">BITCOIN LAB</div>
-                <div class="screen-live">● LIVE</div>
+              <div class="screenhead"><span>OCEAN POOL</span><span class="live">● AUTHORIZED</span></div>
+              <div class="speed"><small>REAL STRATUM HASHRATE</small><strong>18.42 <span style="font-size:16px">kH/s</span></strong></div>
+              <div class="minigrid">
+                <div class="mini"><small>ACCEPTED</small><b>0</b></div>
+                <div class="mini"><small>JOBS</small><b>127</b></div>
+                <div class="mini"><small>DIFFICULTY</small><b>1.000</b></div>
               </div>
-
-              <div class="hash-card">
-                <small>DOUBLE-SHA256 HASHRATE</small>
-                <div class="hash-value">38.72 <span style="font-size:17px">kH/s</span></div>
-              </div>
-
-              <div class="mini-grid">
-                <div class="mini-card">
-                  <small>TOTAL HASHES</small>
-                  <strong>14.2M</strong>
-                </div>
-                <div class="mini-card">
-                  <small>BEST BITS</small>
-                  <strong>21</strong>
-                </div>
-                <div class="mini-card">
-                  <small>UPTIME</small>
-                  <strong>01:42:09</strong>
-                </div>
-              </div>
-
-              <svg class="sparkline" viewBox="0 0 300 46" preserveAspectRatio="none">
-                <defs>
-                  <linearGradient id="lineFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#35d8ff" stop-opacity=".36"/>
-                    <stop offset="100%" stop-color="#35d8ff" stop-opacity="0"/>
-                  </linearGradient>
-                </defs>
-                <path d="M0,40 L18,36 L36,38 L54,27 L72,31 L90,20 L108,24 L126,14 L144,19 L162,10 L180,13 L198,7 L216,15 L234,9 L252,12 L270,4 L300,8 L300,46 L0,46 Z"
-                      fill="url(#lineFill)"/>
-                <path d="M0,40 L18,36 L36,38 L54,27 L72,31 L90,20 L108,24 L126,14 L144,19 L162,10 L180,13 L198,7 L216,15 L234,9 L252,12 L270,4 L300,8"
-                      fill="none" stroke="#35d8ff" stroke-width="2"/>
+              <svg class="line" viewBox="0 0 300 43" preserveAspectRatio="none">
+                <defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#35d8ff" stop-opacity=".35"/><stop offset="1" stop-color="#35d8ff" stop-opacity="0"/></linearGradient></defs>
+                <path d="M0,36 L18,31 L36,33 L54,25 L72,29 L90,19 L108,23 L126,13 L144,18 L162,10 L180,14 L198,7 L216,12 L234,8 L252,11 L270,5 L300,7 L300,43 L0,43 Z" fill="url(#fill)"/>
+                <path d="M0,36 L18,31 L36,33 L54,25 L72,29 L90,19 L108,23 L126,13 L144,18 L162,10 L180,14 L198,7 L216,12 L234,8 L252,11 L270,5 L300,7" fill="none" stroke="#35d8ff" stroke-width="2"/>
               </svg>
             </div>
           </div>
         </div>
-      </section>
+      </div>
 
-      <section class="section" id="features">
-        <div class="section-heading">
-          <h2>A premium installer built for your CYD</h2>
-          <p>
-            Everything needed to verify compatibility, install firmware, and
-            understand the project before connecting the board.
-          </p>
-        </div>
-
-        <div class="grid">
-          <article class="card feature">
-            <div class="feature-icon">⚡</div>
-            <h3>One-click installation</h3>
-            <p>Uses ESP Web Tools with your existing firmware manifest and merged BIN.</p>
-          </article>
-
-          <article class="card feature">
-            <div class="feature-icon">✓</div>
-            <h3>Automatic checks</h3>
-            <p>Confirms HTTPS, browser support, the manifest, and firmware availability.</p>
-          </article>
-
-          <article class="card feature">
-            <div class="feature-icon">₿</div>
-            <h3>Premium visual design</h3>
-            <p>A modern dark interface inspired by the CYD Bitcoin Lab firmware.</p>
-          </article>
-        </div>
-      </section>
-
-      <section class="section" id="installer">
-        <div class="section-heading">
-          <h2>Firmware installer</h2>
-          <p>
-            Connect the CYD using a USB data cable and start the installation
-            only when you are ready.
-          </p>
-        </div>
-
-        <div class="installer-grid">
-          <article class="card install-card">
-            <div class="card-title">
-              <h3>Install CYD Bitcoin Lab</h3>
-              <span class="badge" id="manifestVersion">Checking version…</span>
-            </div>
-
+      <section id="install">
+        <div class="heading"><h2>Install once. Monitor anytime.</h2><p>The installer writes V9 to the ESP32. The viewer connects later through USB serial and does not erase or upload anything.</p></div>
+        <div class="twocol">
+          <article class="card install">
+            <div class="cardtitle"><h3>Firmware installer</h3><span class="badge" id="version">Checking…</span></div>
             <div class="checks">
-              <div class="check">
-                <div class="check-left">
-                  <span class="status-dot" id="httpsDot"></span>
-                  <span>Secure HTTPS page</span>
-                </div>
-                <span class="status-text" id="httpsText">Checking</span>
-              </div>
-
-              <div class="check">
-                <div class="check-left">
-                  <span class="status-dot" id="serialDot"></span>
-                  <span>Compatible browser</span>
-                </div>
-                <span class="status-text" id="serialText">Checking</span>
-              </div>
-
-              <div class="check">
-                <div class="check-left">
-                  <span class="status-dot" id="manifestDot"></span>
-                  <span>Firmware manifest</span>
-                </div>
-                <span class="status-text" id="manifestText">Checking</span>
-              </div>
-
-              <div class="check">
-                <div class="check-left">
-                  <span class="status-dot" id="firmwareDot"></span>
-                  <span>Merged firmware BIN</span>
-                </div>
-                <span class="status-text" id="firmwareText">Checking</span>
-              </div>
+              <div class="check"><span class="checkleft"><span class="dot" id="httpsDot"></span>Secure HTTPS</span><small id="httpsText">Checking</small></div>
+              <div class="check"><span class="checkleft"><span class="dot" id="serialDot"></span>Chrome Web Serial</span><small id="serialText">Checking</small></div>
+              <div class="check"><span class="checkleft"><span class="dot" id="manifestDot"></span>Firmware manifest</span><small id="manifestText">Checking</small></div>
+              <div class="check"><span class="checkleft"><span class="dot" id="binDot"></span>Merged BIN</span><small id="binText">Checking</small></div>
             </div>
-
             <esp-web-install-button manifest="manifest.json">
-              <button class="primary" slot="activate" style="width:100%">
-                Install firmware
-              </button>
-
-              <span slot="unsupported">
-                Installation requires desktop Chrome or Microsoft Edge.
-              </span>
-
-              <span slot="not-allowed">
-                Installation requires a secure HTTPS page.
-              </span>
+              <button class="primary" slot="activate" style="width:100%">Install CYD Bitcoin Lab V9</button>
+              <span slot="unsupported">Use desktop Chrome or Microsoft Edge.</span>
+              <span slot="not-allowed">Installation requires HTTPS.</span>
             </esp-web-install-button>
-
-            <div class="note">
-              Installation writes firmware to the ESP32. Keep the board connected
-              until the process is complete.
-            </div>
+            <div class="note">Enter only a public Bitcoin receiving address in the device setup portal. Never enter private keys, seed phrases, wallet passwords, or recovery words.</div>
           </article>
 
-          <article class="card coming-card" id="diagnostics">
-            <div class="coming-icon">◉</div>
-            <span class="badge" style="width:max-content;margin-bottom:16px">COMING SOON</span>
-            <h3>Live diagnostics</h3>
-            <p>
-              A future release will connect to the already-installed CYD firmware
-              and display real-time device telemetry directly in the browser.
-            </p>
-
-            <div class="coming-list">
-              <div class="coming-item"><span>✓</span><span>Live hashrate and total hashes</span></div>
-              <div class="coming-item"><span>✓</span><span>BTC price and market telemetry</span></div>
-              <div class="coming-item"><span>✓</span><span>Wi-Fi, heap, uptime, and reset reason</span></div>
-              <div class="coming-item"><span>✓</span><span>Browser-based settings and diagnostics</span></div>
-              <div class="coming-item"><span>✓</span><span>No repeated firmware installation required</span></div>
+          <article class="card dashboard" id="viewer">
+            <div class="cardtitle"><h3>Live pool viewer</h3><span class="badge" id="viewerBadge">Disconnected</span></div>
+            <div class="connectrow">
+              <button class="primary" id="connect">Connect CYD</button>
+              <button class="danger hidden" id="disconnect">Disconnect</button>
+              <button class="secondary" id="clear">Clear log</button>
             </div>
+            <div class="statusline"><span class="statuslight" id="statusLight"></span><span id="poolStatus">Connect the already-flashed CYD at 115200 baud.</span></div>
+
+            <div class="metrics">
+              <div class="metric hot"><small>HASHRATE</small><strong id="hashrate">-- kH/s</strong></div>
+              <div class="metric good"><small>ACCEPTED</small><strong id="accepted">--</strong></div>
+              <div class="metric bad"><small>REJECTED</small><strong id="rejected">--</strong></div>
+              <div class="metric cool"><small>JOBS</small><strong id="jobs">--</strong></div>
+              <div class="metric"><small>DIFFICULTY</small><strong id="difficulty">--</strong></div>
+              <div class="metric"><small>BTC PRICE</small><strong id="price">--</strong></div>
+              <div class="metric"><small>BLOCK HEIGHT</small><strong id="height">--</strong></div>
+              <div class="metric"><small>PARAMUS</small><strong id="weather">--</strong></div>
+            </div>
+
+            <div class="chartcard">
+              <div class="charthead"><span>Measured hashrate</span><span id="uptime">Uptime --</span></div>
+              <canvas id="chart" width="760" height="155"></canvas>
+            </div>
+
+            <div class="details">
+              <div class="detail">Authorization<b id="authorized">--</b></div>
+              <div class="detail">Best zero bits<b id="bestBits">--</b></div>
+              <div class="detail">Free heap<b id="heap">--</b></div>
+            </div>
+
+            <div class="console" id="console"></div>
+            <div class="note">The browser must ask you to choose the USB serial port. Connecting here does not flash the ESP32.</div>
           </article>
         </div>
+      </section>
+
+      <section id="setup">
+        <div class="heading"><h2>First-boot setup</h2><p>After installation, connect to <b>CYD-Miner-Setup</b> with password <b>bitcoin123</b>. Choose Wi-Fi, then enter your public Bitcoin address and OpenWeather API key.</p></div>
       </section>
     </main>
 
-    <footer>
-      CYD Bitcoin Lab • ESP32-2432S028R • Premium browser installer
-    </footer>
+    <footer>CYD Bitcoin Lab V9 Pool Edition • Educational low-power Stratum miner • Paramus, New Jersey</footer>
   </div>
 
   <script>
-    const $ = (id) => document.getElementById(id);
+    const $ = id => document.getElementById(id);
+    const state = { port:null, reader:null, reading:false, buffer:"", points:[] };
 
-    function setCheck(dotId, textId, ok, text) {
-      const dot = $(dotId);
-      dot.classList.remove("ok", "bad");
-      dot.classList.add(ok ? "ok" : "bad");
-      $(textId).textContent = text;
+    function setCheck(dot,text,ok,label){$(dot).classList.remove("ok","bad");$(dot).classList.add(ok?"ok":"bad");$(text).textContent=label}
+    function log(text){const el=$("console");el.textContent+=text;el.scrollTop=el.scrollHeight}
+    function number(value,digits=0){const n=Number(value);return Number.isFinite(n)?n.toLocaleString(undefined,{maximumFractionDigits:digits,minimumFractionDigits:digits}):"--"}
+    function uptime(seconds){seconds=Number(seconds)||0;const h=Math.floor(seconds/3600),m=Math.floor(seconds%3600/60),s=Math.floor(seconds%60);return [h,m,s].map(v=>String(v).padStart(2,"0")).join(":")}
+
+    function drawChart(){
+      const canvas=$("chart"),ctx=canvas.getContext("2d"),w=canvas.width,h=canvas.height;
+      ctx.clearRect(0,0,w,h);ctx.fillStyle="#030509";ctx.fillRect(0,0,w,h);
+      ctx.strokeStyle="rgba(255,255,255,.08)";ctx.lineWidth=1;
+      for(let i=1;i<4;i++){const y=i*h/4;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}
+      if(state.points.length<2)return;
+      const min=Math.min(...state.points),max=Math.max(...state.points),range=Math.max(.01,max-min);
+      const xy=(v,i)=>[i*w/(state.points.length-1),h-10-(v-min)/range*(h-20)];
+      const grad=ctx.createLinearGradient(0,0,0,h);grad.addColorStop(0,"rgba(53,216,255,.35)");grad.addColorStop(1,"rgba(53,216,255,0)");
+      ctx.beginPath();state.points.forEach((v,i)=>{const [x,y]=xy(v,i);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();ctx.fillStyle=grad;ctx.fill();
+      ctx.beginPath();state.points.forEach((v,i)=>{const [x,y]=xy(v,i);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.strokeStyle="#35d8ff";ctx.lineWidth=3;ctx.stroke();
     }
 
-    async function checkFiles() {
-      const secure =
-        location.protocol === "https:" ||
-        location.hostname === "localhost";
-
-      setCheck(
-        "httpsDot",
-        "httpsText",
-        secure,
-        secure ? "Ready" : "HTTPS required"
-      );
-
-      const serialSupported = "serial" in navigator;
-
-      setCheck(
-        "serialDot",
-        "serialText",
-        serialSupported,
-        serialSupported ? "Chrome / Edge ready" : "Use Chrome / Edge"
-      );
-
-      try {
-        const response = await fetch("manifest.json", { cache: "no-store" });
-
-        if (!response.ok) {
-          throw new Error("Manifest unavailable");
-        }
-
-        const manifest = await response.json();
-
-        $("manifestVersion").textContent =
-          manifest.version
-            ? "Version " + manifest.version
-            : "Manifest ready";
-
-        setCheck("manifestDot", "manifestText", true, "Ready");
-
-        const part =
-          manifest?.builds?.[0]?.parts?.find(item =>
-            String(item.path || "").toLowerCase().endsWith(".bin")
-          );
-
-        const firmwarePath =
-          part?.path || "firmware/CYD_Bitcoin_Miner_Complete.bin";
-
-        const firmwareResponse =
-          await fetch(
-            firmwarePath,
-            { method: "HEAD", cache: "no-store" }
-          );
-
-        if (!firmwareResponse.ok) {
-          throw new Error("Firmware unavailable");
-        }
-
-        const size =
-          Number(
-            firmwareResponse.headers.get("content-length") || 0
-          );
-
-        setCheck(
-          "firmwareDot",
-          "firmwareText",
-          true,
-          size
-            ? (size / 1024 / 1024).toFixed(2) + " MB"
-            : "Ready"
-        );
-      } catch (error) {
-        setCheck(
-          "manifestDot",
-          "manifestText",
-          false,
-          "Unavailable"
-        );
-
-        setCheck(
-          "firmwareDot",
-          "firmwareText",
-          false,
-          "Unavailable"
-        );
-
-        $("manifestVersion").textContent =
-          "Firmware unavailable";
-      }
+    function applyStatus(data){
+      const connected=Boolean(data.pool_connected),authorized=Boolean(data.authorized);
+      $("statusLight").classList.toggle("connected",connected);
+      $("viewerBadge").textContent=connected?"USB + Pool Live":"USB connected";
+      $("poolStatus").textContent=data.pool_status||"Waiting for status";
+      $("hashrate").textContent=number(data.hashrate_khs,2)+" kH/s";
+      $("accepted").textContent=number(data.accepted);
+      $("rejected").textContent=number(data.rejected);
+      $("jobs").textContent=number(data.jobs);
+      $("difficulty").textContent=number(data.difficulty,4);
+      $("price").textContent=Number(data.btc_price)>0?"$"+number(data.btc_price,2):"--";
+      $("height").textContent=Number(data.block_height)>0?number(data.block_height):"--";
+      $("weather").textContent=data.weather_valid?number(data.weather_temp_f,1)+"°F":"--";
+      $("authorized").textContent=authorized?"AUTHORIZED":"NO";
+      $("authorized").style.color=authorized?"var(--green)":"var(--yellow)";
+      $("bestBits").textContent=number(data.best_bits);
+      $("heap").textContent=number(data.free_heap)+" B";
+      $("uptime").textContent="Uptime "+uptime(data.uptime_s);
+      const hash=Number(data.hashrate_khs);if(Number.isFinite(hash)){state.points.push(hash);if(state.points.length>90)state.points.shift();drawChart()}
     }
 
-    checkFiles();
+    function consumeText(text){
+      state.buffer+=text;
+      const lines=state.buffer.split(/\r?\n/);state.buffer=lines.pop()||"";
+      for(const line of lines){if(!line.trim())continue;try{const data=JSON.parse(line);if(data.type==="status")applyStatus(data)}catch{log(line+"\n")}}
+    }
+
+    async function connect(){
+      if(!("serial" in navigator)){log("[website] Web Serial needs desktop Chrome or Edge.\n");return}
+      try{
+        state.port=await navigator.serial.requestPort();await state.port.open({baudRate:115200});state.reading=true;
+        $("connect").classList.add("hidden");$("disconnect").classList.remove("hidden");$("viewerBadge").textContent="USB connected";log("[website] Connected. No firmware was uploaded.\n");
+        const decoder=new TextDecoder();
+        while(state.port.readable&&state.reading){state.reader=state.port.readable.getReader();try{while(state.reading){const {value,done}=await state.reader.read();if(done)break;if(value)consumeText(decoder.decode(value,{stream:true}))}}finally{state.reader.releaseLock();state.reader=null}}
+      }catch(error){if(error?.name!=="NotFoundError")log("[website] "+error.message+"\n")}
+    }
+
+    async function disconnect(){state.reading=false;try{if(state.reader)await state.reader.cancel()}catch{}try{if(state.port)await state.port.close()}catch{}state.reader=null;state.port=null;$("connect").classList.remove("hidden");$("disconnect").classList.add("hidden");$("viewerBadge").textContent="Disconnected";$("statusLight").classList.remove("connected");log("[website] Disconnected.\n")}
+
+    async function checks(){
+      const secure=location.protocol==="https:"||location.hostname==="localhost";setCheck("httpsDot","httpsText",secure,secure?"Ready":"HTTPS required");
+      const serial="serial" in navigator;setCheck("serialDot","serialText",serial,serial?"Ready":"Use Chrome/Edge");
+      try{
+        const response=await fetch("manifest.json",{cache:"no-store"});if(!response.ok)throw Error();const manifest=await response.json();$("version").textContent=manifest.version?"Version "+manifest.version:"Ready";setCheck("manifestDot","manifestText",true,"Ready");
+        const part=manifest?.builds?.[0]?.parts?.find(p=>String(p.path||"").endsWith(".bin"));const path=part?.path||"firmware/CYD_Bitcoin_Miner_Complete.bin";const bin=await fetch(path,{method:"HEAD",cache:"no-store"});if(!bin.ok)throw Error();const size=Number(bin.headers.get("content-length")||0);setCheck("binDot","binText",true,size?(size/1048576).toFixed(2)+" MB":"Ready");
+      }catch{setCheck("manifestDot","manifestText",false,"Unavailable");setCheck("binDot","binText",false,"Unavailable");$("version").textContent="Firmware unavailable"}
+    }
+
+    $("connect").addEventListener("click",connect);$("disconnect").addEventListener("click",disconnect);$("clear").addEventListener("click",()=>$("console").textContent="");checks();drawChart();
   </script>
 </body>
 </html>
