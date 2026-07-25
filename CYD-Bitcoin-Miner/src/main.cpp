@@ -267,83 +267,6 @@ TouchPoint readTouchPoint() {
   return point;
 }
 
-void analyzeMinerLocally() {
-  const int rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
-  const uint32_t freeHeap = ESP.getFreeHeap();
-  const uint32_t totalShares = acceptedShares + rejectedShares;
-  const float rejectRate =
-    totalShares > 0 ? (100.0f * rejectedShares / totalShares) : 0.0f;
-
-  if (WiFi.status() != WL_CONNECTED) {
-    localAiHeadline = "WI-FI OFFLINE";
-    localAiLine1 = "Reconnect Wi-Fi before pool mining.";
-    localAiLine2 = "Open setup by holding BOOT 3 sec.";
-    localAiLine3 = "Local SHA-256 fallback is still active.";
-    localAiColor = C_RED;
-    return;
-  }
-
-  if (!pool.tcpConnected) {
-    localAiHeadline = "POOL DISCONNECTED";
-    localAiLine1 = "Wi-Fi works, but Stratum is offline.";
-    localAiLine2 = "Auto-reconnect will keep trying.";
-    localAiLine3 = String("Signal: ") + rssi + " dBm";
-    localAiColor = C_YELLOW;
-    return;
-  }
-
-  if (!pool.authorized) {
-    localAiHeadline = "AUTHORIZATION ISSUE";
-    localAiLine1 = "Check the public Bitcoin address.";
-    localAiLine2 = "Never enter a seed or private key.";
-    localAiLine3 = pool.lastError;
-    localAiColor = C_RED;
-    return;
-  }
-
-  if (freeHeap < 45000) {
-    localAiHeadline = "LOW MEMORY";
-    localAiLine1 = String("Free heap: ") + freeHeap / 1024 + " KB";
-    localAiLine2 = "Restart if the value keeps falling.";
-    localAiLine3 = "Market/weather calls may be delayed.";
-    localAiColor = C_RED;
-    return;
-  }
-
-  if (rssi < -78) {
-    localAiHeadline = "WEAK WI-FI";
-    localAiLine1 = String("Signal is ") + rssi + " dBm.";
-    localAiLine2 = "Move closer to the router.";
-    localAiLine3 = "Weak Wi-Fi can cause stale shares.";
-    localAiColor = C_YELLOW;
-    return;
-  }
-
-  if (rejectRate > 5.0f && totalShares >= 5) {
-    localAiHeadline = "HIGH REJECT RATE";
-    localAiLine1 = String(rejectRate, 1) + "% of submitted shares rejected.";
-    localAiLine2 = "Check latency and pool stability.";
-    localAiLine3 = String("Reconnects: ") + diagnostics.poolReconnects;
-    localAiColor = C_RED;
-    return;
-  }
-
-  if (pool.authorized && !pool.workReady) {
-    localAiHeadline = "WAITING FOR JOB";
-    localAiLine1 = "Authorized, but no active work yet.";
-    localAiLine2 = "The pool may assign jobs slowly.";
-    localAiLine3 = String("Jobs received: ") + pool.jobsReceived;
-    localAiColor = C_YELLOW;
-    return;
-  }
-
-  localAiHeadline = "SYSTEM HEALTHY";
-  localAiLine1 = String("Hashrate: ") + String(smoothedHashrateKHs, 2) + " kH/s";
-  localAiLine2 = String("Wi-Fi: ") + rssi + " dBm, heap: " + freeHeap / 1024 + " KB";
-  localAiLine3 = String("Shares A/R: ") + acceptedShares + "/" + rejectedShares;
-  localAiColor = C_GREEN;
-}
-
 // ============================================================================
 // Utility helpers
 // ============================================================================
@@ -798,6 +721,84 @@ float smoothedHashrateKHs = 0;
 bool miningPoolJob = false;
 
 mbedtls_sha256_context headerMidstate;
+
+void analyzeMinerLocally() {
+  const int rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t totalShares = acceptedShares + rejectedShares;
+  const float rejectRate =
+    totalShares > 0 ? (100.0f * rejectedShares / totalShares) : 0.0f;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    localAiHeadline = "WI-FI OFFLINE";
+    localAiLine1 = "Reconnect Wi-Fi before pool mining.";
+    localAiLine2 = "Open setup by holding BOOT 3 sec.";
+    localAiLine3 = "Local SHA-256 fallback is still active.";
+    localAiColor = C_RED;
+    return;
+  }
+
+  if (!pool.tcpConnected) {
+    localAiHeadline = "POOL DISCONNECTED";
+    localAiLine1 = "Wi-Fi works, but Stratum is offline.";
+    localAiLine2 = "Auto-reconnect will keep trying.";
+    localAiLine3 = String("Signal: ") + rssi + " dBm";
+    localAiColor = C_YELLOW;
+    return;
+  }
+
+  if (!pool.authorized) {
+    localAiHeadline = "AUTHORIZATION ISSUE";
+    localAiLine1 = "Check the public Bitcoin address.";
+    localAiLine2 = "Never enter a seed or private key.";
+    localAiLine3 = pool.lastError;
+    localAiColor = C_RED;
+    return;
+  }
+
+  if (freeHeap < 45000) {
+    localAiHeadline = "LOW MEMORY";
+    localAiLine1 = String("Free heap: ") + freeHeap / 1024 + " KB";
+    localAiLine2 = "Restart if the value keeps falling.";
+    localAiLine3 = "Market/weather calls may be delayed.";
+    localAiColor = C_RED;
+    return;
+  }
+
+  if (rssi < -78) {
+    localAiHeadline = "WEAK WI-FI";
+    localAiLine1 = String("Signal is ") + rssi + " dBm.";
+    localAiLine2 = "Move closer to the router.";
+    localAiLine3 = "Weak Wi-Fi can cause stale shares.";
+    localAiColor = C_YELLOW;
+    return;
+  }
+
+  if (rejectRate > 5.0f && totalShares >= 5) {
+    localAiHeadline = "HIGH REJECT RATE";
+    localAiLine1 = String(rejectRate, 1) + "% of submitted shares rejected.";
+    localAiLine2 = "Check latency and pool stability.";
+    localAiLine3 = String("Reconnects: ") + pool.reconnects;
+    localAiColor = C_RED;
+    return;
+  }
+
+  if (pool.authorized && !pool.workReady) {
+    localAiHeadline = "WAITING FOR JOB";
+    localAiLine1 = "Authorized, but no active work yet.";
+    localAiLine2 = "The pool may assign jobs slowly.";
+    localAiLine3 = String("Jobs received: ") + pool.jobsReceived;
+    localAiColor = C_YELLOW;
+    return;
+  }
+
+  localAiHeadline = "SYSTEM HEALTHY";
+  localAiLine1 = String("Hashrate: ") + String(smoothedHashrateKHs, 2) + " kH/s";
+  localAiLine2 = String("Wi-Fi: ") + rssi + " dBm, heap: " + freeHeap / 1024 + " KB";
+  localAiLine3 = String("Shares A/R: ") + acceptedShares + "/" + rejectedShares;
+  localAiColor = C_GREEN;
+}
+
 
 // ============================================================================
 // Hex and cryptographic helpers
