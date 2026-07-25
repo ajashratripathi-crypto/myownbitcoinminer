@@ -33,6 +33,13 @@
     6. Paramus Weather (OpenWeather)
     7. Device Health
     8. Settings
+    9. Local AI Doctor
+
+  Touch:
+    - Tap left third: previous page
+    - Tap right third: next page
+    - Tap center: open/re-run Local AI Doctor
+    - Uses an in-file XPT2046 driver; no extra library is required
 
   Important:
     - Only a PUBLIC Bitcoin receiving address is requested.
@@ -43,6 +50,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <SPI.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -63,6 +71,37 @@
 
 static constexpr uint8_t PIN_BACKLIGHT = 21;
 static constexpr uint8_t PIN_BOOT = 0;
+
+// CYD XPT2046 resistive touchscreen pins.
+// Implemented directly in this file, so no additional touch library is required.
+static constexpr uint8_t TOUCH_IRQ  = 36;
+static constexpr uint8_t TOUCH_MOSI = 32;
+static constexpr uint8_t TOUCH_MISO = 39;
+static constexpr uint8_t TOUCH_CLK  = 25;
+static constexpr uint8_t TOUCH_CS   = 33;
+
+// Starting calibration values for a typical ESP32-2432S028R.
+// The on-screen touch behavior can be fine-tuned by editing only these four values.
+static constexpr int TOUCH_RAW_MIN_X = 200;
+static constexpr int TOUCH_RAW_MAX_X = 3900;
+static constexpr int TOUCH_RAW_MIN_Y = 200;
+static constexpr int TOUCH_RAW_MAX_Y = 3900;
+
+SPIClass touchSPI(VSPI);
+
+struct TouchPoint {
+  bool pressed = false;
+  int16_t x = 0;
+  int16_t y = 0;
+};
+
+bool touchWasPressed = false;
+uint32_t lastTouchMillis = 0;
+String localAiHeadline = "ANALYZING";
+String localAiLine1 = "Collecting miner telemetry...";
+String localAiLine2 = "";
+String localAiLine3 = "";
+uint16_t localAiColor = 0xFFE0;
 
 TFT_eSPI tft = TFT_eSPI();
 Preferences preferences;
@@ -112,7 +151,7 @@ static constexpr uint32_t WIFI_RECONNECT_MS = 15UL * 1000UL;
 static constexpr uint32_t POOL_RECONNECT_MS = 10UL * 1000UL;
 static constexpr uint32_t POOL_SILENCE_MS = 120UL * 1000UL;
 static constexpr uint32_t LONG_PRESS_MS = 3000;
-static constexpr uint16_t HASH_BATCH_SIZE = 96;
+static constexpr uint16_t HASH_BATCH_SIZE = 192;
 static constexpr uint8_t CANDLE_COUNT = 24;
 static constexpr uint8_t MAX_MERKLE_BRANCHES = 20;
 
@@ -159,10 +198,11 @@ enum class Page : uint8_t {
   CLOCK = 4,
   WEATHER = 5,
   DEVICE = 6,
-  SETTINGS = 7
+  SETTINGS = 7,
+  AI = 8
 };
 
-static constexpr uint8_t PAGE_COUNT = 8;
+static constexpr uint8_t PAGE_COUNT = 9;
 Page currentPage = Page::POOL;
 
 bool pageNeedsDraw = true;
@@ -180,6 +220,129 @@ uint32_t lastWeatherRefresh = 0;
 uint32_t lastSaveRefresh = 0;
 uint32_t lastWifiReconnect = 0;
 uint32_t buttonDownMillis = 0;
+
+
+// ============================================================================
+// Touchscreen driver and local diagnostic AI
+// ============================================================================
+
+uint16_t touchReadAxis(uint8_t command) {
+  touchSPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(TOUCH_CS, LOW);
+  touchSPI.transfer(command);
+  uint16_t value = static_cast<uint16_t>(touchSPI.transfer16(0x0000));
+  digitalWrite(TOUCH_CS, HIGH);
+  touchSPI.endTransaction();
+  return (value >> 3) & 0x0FFF;
+}
+
+TouchPoint readTouchPoint() {
+  TouchPoint point;
+
+  if (digitalRead(TOUCH_IRQ) == HIGH) {
+    return point;
+  }
+
+  // Median-like averaging reduces stylus jitter.
+  uint32_t sumX = 0;
+  uint32_t sumY = 0;
+  constexpr uint8_t samples = 5;
+
+  for (uint8_t i = 0; i < samples; i++) {
+    // XPT2046 commands: X=0xD0, Y=0x90.
+    sumX += touchReadAxis(0xD0);
+    sumY += touchReadAxis(0x90);
+  }
+
+  int rawX = sumX / samples;
+  int rawY = sumY / samples;
+
+  // Landscape rotation 1: raw Y maps to screen X and raw X maps inversely to screen Y.
+  int screenX = map(rawY, TOUCH_RAW_MIN_Y, TOUCH_RAW_MAX_Y, 0, 319);
+  int screenY = map(rawX, TOUCH_RAW_MIN_X, TOUCH_RAW_MAX_X, 239, 0);
+
+  point.x = constrain(screenX, 0, 319);
+  point.y = constrain(screenY, 0, 239);
+  point.pressed = true;
+  return point;
+}
+
+void analyzeMinerLocally() {
+  const int rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t totalShares = acceptedShares + rejectedShares;
+  const float rejectRate =
+    totalShares > 0 ? (100.0f * rejectedShares / totalShares) : 0.0f;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    localAiHeadline = "WI-FI OFFLINE";
+    localAiLine1 = "Reconnect Wi-Fi before pool mining.";
+    localAiLine2 = "Open setup by holding BOOT 3 sec.";
+    localAiLine3 = "Local SHA-256 fallback is still active.";
+    localAiColor = C_RED;
+    return;
+  }
+
+  if (!pool.tcpConnected) {
+    localAiHeadline = "POOL DISCONNECTED";
+    localAiLine1 = "Wi-Fi works, but Stratum is offline.";
+    localAiLine2 = "Auto-reconnect will keep trying.";
+    localAiLine3 = String("Signal: ") + rssi + " dBm";
+    localAiColor = C_YELLOW;
+    return;
+  }
+
+  if (!pool.authorized) {
+    localAiHeadline = "AUTHORIZATION ISSUE";
+    localAiLine1 = "Check the public Bitcoin address.";
+    localAiLine2 = "Never enter a seed or private key.";
+    localAiLine3 = pool.lastError;
+    localAiColor = C_RED;
+    return;
+  }
+
+  if (freeHeap < 45000) {
+    localAiHeadline = "LOW MEMORY";
+    localAiLine1 = String("Free heap: ") + freeHeap / 1024 + " KB";
+    localAiLine2 = "Restart if the value keeps falling.";
+    localAiLine3 = "Market/weather calls may be delayed.";
+    localAiColor = C_RED;
+    return;
+  }
+
+  if (rssi < -78) {
+    localAiHeadline = "WEAK WI-FI";
+    localAiLine1 = String("Signal is ") + rssi + " dBm.";
+    localAiLine2 = "Move closer to the router.";
+    localAiLine3 = "Weak Wi-Fi can cause stale shares.";
+    localAiColor = C_YELLOW;
+    return;
+  }
+
+  if (rejectRate > 5.0f && totalShares >= 5) {
+    localAiHeadline = "HIGH REJECT RATE";
+    localAiLine1 = String(rejectRate, 1) + "% of submitted shares rejected.";
+    localAiLine2 = "Check latency and pool stability.";
+    localAiLine3 = String("Reconnects: ") + diagnostics.poolReconnects;
+    localAiColor = C_RED;
+    return;
+  }
+
+  if (pool.authorized && !pool.workReady) {
+    localAiHeadline = "WAITING FOR JOB";
+    localAiLine1 = "Authorized, but no active work yet.";
+    localAiLine2 = "The pool may assign jobs slowly.";
+    localAiLine3 = String("Jobs received: ") + pool.jobsReceived;
+    localAiColor = C_YELLOW;
+    return;
+  }
+
+  localAiHeadline = "SYSTEM HEALTHY";
+  localAiLine1 = String("Hashrate: ") + String(smoothedHashrateKHs, 2) + " kH/s";
+  localAiLine2 = String("Wi-Fi: ") + rssi + " dBm, heap: " + freeHeap / 1024 + " KB";
+  localAiLine3 = String("Shares A/R: ") + acceptedShares + "/" + rejectedShares;
+  localAiColor = C_GREEN;
+}
 
 // ============================================================================
 // Utility helpers
@@ -1689,6 +1852,27 @@ void drawSettingsLayout() {
   drawPageDots();
 }
 
+
+void drawAiLayout() {
+  analyzeMinerLocally();
+
+  tft.fillScreen(C_BG);
+  drawHeader("LOCAL AI DOCTOR", "OFFLINE", true);
+
+  panel(8, 42, 304, 48, C_PANEL);
+  centerText(localAiHeadline, 160, 66, localAiColor, C_PANEL, 2);
+
+  panel(8, 98, 304, 84, C_PANEL);
+  leftText(localAiLine1, 18, 110, C_TEXT, C_PANEL, 2);
+  leftText(localAiLine2, 18, 134, C_TEXT, C_PANEL, 2);
+  leftText(localAiLine3, 18, 158, C_MUTED, C_PANEL, 2);
+
+  panel(8, 190, 304, 26, C_PANEL);
+  centerText("TAP CENTER TO RE-ANALYZE", 160, 203, C_CYAN, C_PANEL, 1);
+
+  drawPageDots();
+}
+
 void drawCurrentLayout() {
   switch (currentPage) {
     case Page::POOL: drawPoolLayout(); break;
@@ -1699,6 +1883,7 @@ void drawCurrentLayout() {
     case Page::WEATHER: drawWeatherLayout(); break;
     case Page::DEVICE: drawDeviceLayout(); break;
     case Page::SETTINGS: drawSettingsLayout(); break;
+    case Page::AI: drawAiLayout(); break;
   }
 
   pageNeedsDraw = false;
@@ -1954,6 +2139,9 @@ void updateCurrentValues() {
     case Page::WEATHER: updateWeatherValues(); break;
     case Page::DEVICE: updateDeviceValues(); break;
     case Page::SETTINGS: break;
+    case Page::AI:
+      analyzeMinerLocally();
+      break;
   }
 }
 
@@ -2139,6 +2327,41 @@ void nextPage() {
   changePage(static_cast<Page>(next));
 }
 
+
+void previousPage() {
+  uint8_t value = static_cast<uint8_t>(currentPage);
+  uint8_t previous = value == 0 ? PAGE_COUNT - 1 : value - 1;
+  changePage(static_cast<Page>(previous));
+}
+
+void handleTouchscreen() {
+  TouchPoint point = readTouchPoint();
+
+  if (point.pressed && !touchWasPressed &&
+      millis() - lastTouchMillis > 180) {
+    touchWasPressed = true;
+    lastTouchMillis = millis();
+
+    // Stylus/touch navigation:
+    // left third = previous page, right third = next page.
+    // center on AI page = run diagnosis again.
+    if (point.x < 95) {
+      previousPage();
+    } else if (point.x > 225) {
+      nextPage();
+    } else if (currentPage == Page::AI) {
+      analyzeMinerLocally();
+      pageNeedsDraw = true;
+    } else {
+      changePage(Page::AI);
+    }
+  }
+
+  if (!point.pressed) {
+    touchWasPressed = false;
+  }
+}
+
 void handleButton() {
   bool down = digitalRead(PIN_BOOT) == LOW;
 
@@ -2284,6 +2507,11 @@ void setup() {
   diagnostics.resetReason = esp_reset_reason();
   diagnostics.minimumHeap = ESP.getFreeHeap();
 
+  pinMode(TOUCH_CS, OUTPUT);
+  digitalWrite(TOUCH_CS, HIGH);
+  pinMode(TOUCH_IRQ, INPUT);
+  touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+
   loadPreferences();
 
   tft.init();
@@ -2314,6 +2542,7 @@ void loop() {
   runMiningBatch();
 
   handleButton();
+  handleTouchscreen();
   maintainPageRotation();
   maintainWifi();
   maintainData();
