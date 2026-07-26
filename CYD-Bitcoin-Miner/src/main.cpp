@@ -103,7 +103,9 @@ String localAiLine2 = "";
 String localAiLine3 = "";
 uint16_t localAiColor = 0xFFE0;
 
+bool aiModeActive = false;
 bool aiKeyboardOpen = false;
+bool settingsModeActive = false;
 bool aiUppercase = false;
 bool aiSymbols = false;
 bool aiRequestPending = false;
@@ -118,28 +120,28 @@ uint32_t aiLastRequestMs = 0;
 TFT_eSPI tft = TFT_eSPI();
 Preferences preferences;
 
-static constexpr uint16_t C_BG          = 0x0000;
-static constexpr uint16_t C_HEADER      = 0x0841;
-static constexpr uint16_t C_PANEL       = 0x1082;
-static constexpr uint16_t C_PANEL_ALT   = 0x18C3;
-static constexpr uint16_t C_BORDER      = 0x31A6;
-static constexpr uint16_t C_GRID        = 0x2124;
-static constexpr uint16_t C_TEXT        = 0xFFFF;
-static constexpr uint16_t C_MUTED       = 0x9CD3;
-static constexpr uint16_t C_ORANGE      = 0xFD20;
-static constexpr uint16_t C_ORANGE_DARK = 0xA300;
-static constexpr uint16_t C_CYAN        = 0x05FF;
-static constexpr uint16_t C_GREEN       = 0x07E0;
-static constexpr uint16_t C_RED         = 0xF800;
-static constexpr uint16_t C_YELLOW      = 0xFFE0;
-static constexpr uint16_t C_PURPLE      = 0xA81F;
-static constexpr uint16_t C_BLUE        = 0x049F;
+uint16_t C_BG          = 0x0000;
+uint16_t C_HEADER      = 0x0841;
+uint16_t C_PANEL       = 0x1082;
+uint16_t C_PANEL_ALT   = 0x18C3;
+uint16_t C_BORDER      = 0x31A6;
+uint16_t C_GRID        = 0x2124;
+uint16_t C_TEXT        = 0xFFFF;
+uint16_t C_MUTED       = 0x9CD3;
+uint16_t C_ORANGE      = 0xFD20;
+uint16_t C_ORANGE_DARK = 0xA300;
+uint16_t C_CYAN        = 0x05FF;
+uint16_t C_GREEN       = 0x07E0;
+uint16_t C_RED         = 0xF800;
+uint16_t C_YELLOW      = 0xFFE0;
+uint16_t C_PURPLE      = 0xA81F;
+uint16_t C_BLUE        = 0x049F;
 
 // ============================================================================
 // Firmware constants
 // ============================================================================
 
-static const char* FW_VERSION = "10.1.0-ai";
+static const char* FW_VERSION = "11.0.0-ai-ui";
 static const char* AP_NAME = "CYD-Miner-Setup";
 static const char* AP_PASSWORD = "bitcoin123";
 
@@ -180,6 +182,8 @@ struct AppConfig {
   String openRouterKey = "";
   bool autoRotate = true;
   uint16_t pageSeconds = 10;
+  uint8_t uiTheme = 0;
+  uint8_t brightness = 210;
 };
 
 struct LifetimeStats {
@@ -273,14 +277,47 @@ TouchPoint readTouchPoint() {
   int rawX = sumX / samples;
   int rawY = sumY / samples;
 
-  // Landscape rotation 1: raw Y maps to screen X and raw X maps inversely to screen Y.
-  int screenX = map(rawY, TOUCH_RAW_MIN_Y, TOUCH_RAW_MAX_Y, 0, 319);
-  int screenY = map(rawX, TOUCH_RAW_MIN_X, TOUCH_RAW_MAX_X, 239, 0);
+  int screenX = map(rawX, TOUCH_RAW_MIN_X, TOUCH_RAW_MAX_X, 0, 319);
+  int screenY = map(rawY, TOUCH_RAW_MIN_Y, TOUCH_RAW_MAX_Y, 0, 239);
 
   point.x = constrain(screenX, 0, 319);
   point.y = constrain(screenY, 0, 239);
   point.pressed = true;
   return point;
+}
+
+void applyTheme(uint8_t theme) {
+  config.uiTheme = theme % 3;
+
+  if (config.uiTheme == 0) {
+    C_BG = 0x0000; C_HEADER = 0x0841; C_PANEL = 0x1082; C_PANEL_ALT = 0x18C3;
+    C_BORDER = 0x31A6; C_GRID = 0x2124; C_TEXT = 0xFFFF; C_MUTED = 0x9CD3;
+    C_ORANGE = 0xFD20; C_ORANGE_DARK = 0xA300; C_CYAN = 0x05FF;
+    C_GREEN = 0x07E0; C_RED = 0xF800; C_YELLOW = 0xFFE0;
+    C_PURPLE = 0xA81F; C_BLUE = 0x049F;
+  } else if (config.uiTheme == 1) {
+    C_BG = 0x0000; C_HEADER = 0x002A; C_PANEL = 0x014C; C_PANEL_ALT = 0x0211;
+    C_BORDER = 0x03B5; C_GRID = 0x01A9; C_TEXT = 0xFFFF; C_MUTED = 0x7D7C;
+    C_ORANGE = 0x07FF; C_ORANGE_DARK = 0x03D3; C_CYAN = 0x07FF;
+    C_GREEN = 0x07E0; C_RED = 0xF800; C_YELLOW = 0xFFE0;
+    C_PURPLE = 0x781F; C_BLUE = 0x001F;
+  } else {
+    C_BG = 0x0808; C_HEADER = 0x200C; C_PANEL = 0x300F; C_PANEL_ALT = 0x4814;
+    C_BORDER = 0x701F; C_GRID = 0x4011; C_TEXT = 0xFFFF; C_MUTED = 0xBDF7;
+    C_ORANGE = 0xF81F; C_ORANGE_DARK = 0x8010; C_CYAN = 0xA81F;
+    C_GREEN = 0x07E0; C_RED = 0xF800; C_YELLOW = 0xFFE0;
+    C_PURPLE = 0xF81F; C_BLUE = 0x681F;
+  }
+}
+
+String themeName() {
+  if (config.uiTheme == 1) return "CYBER CYAN";
+  if (config.uiTheme == 2) return "MIDNIGHT PURPLE";
+  return "BITCOIN ORANGE";
+}
+
+void applyBrightness() {
+  ledcWrite(0, config.brightness);
 }
 
 // ============================================================================
@@ -428,6 +465,8 @@ void loadPreferences() {
   config.openRouterKey = preferences.getString("openrouter", "");
   config.autoRotate = preferences.getBool("rotate", true);
   config.pageSeconds = preferences.getUShort("pageSec", 10);
+  config.uiTheme = preferences.getUChar("theme", 0);
+  config.brightness = preferences.getUChar("bright", 210);
 
   lifetime.hashesBeforeBoot = preferences.getULong64("hashes", 0);
   lifetime.runtimeBeforeBoot = preferences.getULong64("runtime", 0);
@@ -451,6 +490,8 @@ void saveConfiguration() {
   preferences.putString("openrouter", config.openRouterKey);
   preferences.putBool("rotate", config.autoRotate);
   preferences.putUShort("pageSec", config.pageSeconds);
+  preferences.putUChar("theme", config.uiTheme);
+  preferences.putUChar("bright", config.brightness);
 
   preferences.end();
 }
@@ -1850,28 +1891,36 @@ void drawDeviceLayout() {
 
 void drawSettingsLayout() {
   tft.fillScreen(C_BG);
-  drawHeader("SETTINGS", String("V") + FW_VERSION, true);
+  drawHeader("CONTROL CENTER", "TAP TO CHANGE", true);
 
-  panel(8, 40, 304, 34, C_PANEL);
-  leftText("POOL", 16, 47, C_MUTED, C_PANEL, 1);
-  leftText(String(POOL_HOST) + ":" + String(POOL_PORT), 86, 57, C_TEXT, C_PANEL, 2);
+  panel(8, 39, 304, 42, C_PANEL);
+  leftText("UI THEME", 17, 47, C_MUTED, C_PANEL, 1);
+  leftText(themeName(), 17, 67, C_ORANGE, C_PANEL, 2);
+  centerText(">", 293, 60, C_TEXT, C_PANEL, 2);
 
-  panel(8, 80, 304, 34, C_PANEL);
-  leftText("PAYOUT", 16, 87, C_MUTED, C_PANEL, 1);
-  leftText(shortAddress(config.bitcoinAddress), 86, 97, C_ORANGE, C_PANEL, 2);
+  panel(8, 87, 148, 42, C_PANEL);
+  leftText("AUTO ROTATE", 17, 95, C_MUTED, C_PANEL, 1);
+  leftText(config.autoRotate ? "ON" : "OFF", 17, 115,
+           config.autoRotate ? C_GREEN : C_RED, C_PANEL, 2);
 
-  panel(8, 120, 304, 34, C_PANEL);
-  leftText("WEATHER", 16, 127, C_MUTED, C_PANEL, 1);
-  leftText(config.openWeatherKey.isEmpty() ? "NOT CONFIGURED" : "CONFIGURED", 110, 137,
-           config.openWeatherKey.isEmpty() ? C_RED : C_GREEN, C_PANEL, 2);
+  panel(164, 87, 148, 42, C_PANEL);
+  leftText("PAGE TIME", 173, 95, C_MUTED, C_PANEL, 1);
+  leftText(String(config.pageSeconds) + " SEC", 173, 115, C_CYAN, C_PANEL, 2);
 
-  panel(8, 160, 304, 34, C_PANEL);
-  leftText("OPENROUTER", 16, 167, C_MUTED, C_PANEL, 1);
-  leftText(config.openRouterKey.isEmpty() ? "NOT CONFIGURED" : "CONFIGURED", 126, 177,
+  panel(8, 135, 148, 42, C_PANEL);
+  leftText("BRIGHTNESS", 17, 143, C_MUTED, C_PANEL, 1);
+  leftText(String(map(config.brightness, 25, 255, 10, 100)) + "%", 17, 163, C_YELLOW, C_PANEL, 2);
+
+  panel(164, 135, 148, 42, C_PANEL);
+  leftText("OPENROUTER", 173, 143, C_MUTED, C_PANEL, 1);
+  leftText(config.openRouterKey.isEmpty() ? "MISSING" : "READY", 173, 163,
            config.openRouterKey.isEmpty() ? C_RED : C_GREEN, C_PANEL, 2);
 
-  panel(8, 200, 304, 24, C_PANEL);
-  centerText("HOLD BOOT 3 SEC TO REOPEN SETUP", 160, 212, C_CYAN, C_PANEL, 1);
+  tft.fillRoundRect(8, 184, 148, 38, 7, C_ORANGE_DARK);
+  centerText("ENTER AI", 82, 203, C_TEXT, C_ORANGE_DARK, 2);
+
+  tft.fillRoundRect(164, 184, 148, 38, 7, C_BLUE);
+  centerText("SETUP PORTAL", 238, 203, C_TEXT, C_BLUE, 2);
 
   drawPageDots();
 }
@@ -1920,29 +1969,31 @@ void drawWrappedText(const String& raw, int x, int y, int width, int maxLines,
 
 void drawAiLayout() {
   tft.fillScreen(C_BG);
-  drawHeader("BITCOIN LAB AI", aiBusy ? "THINKING" : aiStatus,
-             WiFi.status() == WL_CONNECTED && !config.openRouterKey.isEmpty());
+  tft.fillRect(0, 0, 320, 34, C_HEADER);
+  leftText("BITCOIN LAB AI", 8, 17, C_TEXT, C_HEADER, 2);
+  tft.fillRoundRect(258, 4, 56, 26, 5, C_RED);
+  centerText("EXIT", 286, 17, C_TEXT, C_RED, 2);
 
-  panel(8, 38, 304, 116, C_PANEL);
-  leftText("AI", 17, 45, C_ORANGE, C_PANEL, 1);
-  drawWrappedText(aiAnswer, 17, 62, 286, 5, C_TEXT, C_PANEL, 2);
+  panel(8, 40, 304, 112, C_PANEL);
+  leftText(aiBusy ? "AI IS THINKING" : aiStatus, 17, 48,
+           aiBusy ? C_YELLOW : C_ORANGE, C_PANEL, 1);
+  drawWrappedText(aiAnswer, 17, 65, 286, 5, C_TEXT, C_PANEL, 2);
 
-  panel(8, 162, 242, 44, C_PANEL);
-  leftText("MESSAGE", 17, 168, C_MUTED, C_PANEL, 1);
-  String preview = aiInput.isEmpty() ? "Tap here to type..." : aiInput;
-  if (preview.length() > 30) preview = preview.substring(preview.length() - 30);
-  leftText(preview, 17, 187, aiInput.isEmpty() ? C_MUTED : C_TEXT, C_PANEL, 2);
+  panel(8, 159, 214, 45, C_PANEL);
+  leftText("YOUR MESSAGE", 17, 166, C_MUTED, C_PANEL, 1);
+  String preview = aiInput.isEmpty() ? "Tap TYPE to write" : aiInput;
+  if (preview.length() > 25) preview = preview.substring(preview.length() - 25);
+  leftText(preview, 17, 188, aiInput.isEmpty() ? C_MUTED : C_TEXT, C_PANEL, 2);
 
-  tft.fillRoundRect(258, 162, 54, 44, 7, C_ORANGE_DARK);
-  centerText("TYPE", 285, 184, C_TEXT, C_ORANGE_DARK, 2);
+  tft.fillRoundRect(230, 159, 82, 45, 7, C_ORANGE_DARK);
+  centerText("TYPE", 271, 181, C_TEXT, C_ORANGE_DARK, 2);
 
   panel(8, 211, 304, 18, C_PANEL);
   String modelLabel = aiModelUsed.isEmpty() ? String(OPENROUTER_MODEL) : aiModelUsed;
   if (modelLabel.length() > 34) modelLabel = modelLabel.substring(0, 34);
   centerText(modelLabel, 160, 220, C_CYAN, C_PANEL, 1);
-
-  drawPageDots();
 }
+
 
 void drawKeyboardKey(int x, int y, int w, int h, const String& label, uint16_t color) {
   tft.fillRoundRect(x, y, w, h, 4, color);
@@ -1989,6 +2040,8 @@ void drawAiKeyboard() {
 
 void closeAiKeyboard() {
   aiKeyboardOpen = false;
+  aiModeActive = true;
+  currentPage = Page::AI;
   pageNeedsDraw = true;
 }
 
@@ -2041,6 +2094,7 @@ void handleAiKeyboardTap(int x, int y) {
       aiInput.trim();
       if (!aiInput.isEmpty()) {
         aiQuestion = aiInput;
+        aiInput = "";
         aiAnswer = "Thinking...";
         aiStatus = "SENDING";
         aiRequestPending = true;
@@ -2054,6 +2108,23 @@ void handleAiKeyboardTap(int x, int y) {
   }
 
   drawAiKeyboard();
+}
+
+void enterAiMode() {
+  aiModeActive = true;
+  settingsModeActive = false;
+  currentPage = Page::AI;
+  aiKeyboardOpen = true;
+  lastPageChange = millis();
+  drawAiKeyboard();
+}
+
+void exitAiMode() {
+  aiModeActive = false;
+  aiKeyboardOpen = false;
+  currentPage = Page::SETTINGS;
+  pageNeedsDraw = true;
+  lastPageChange = millis();
 }
 
 void drawCurrentLayout() {
@@ -2457,6 +2528,8 @@ void callOpenRouterAi() {
 
   aiLastRequestMs = millis();
   aiBusy = false;
+  aiModeActive = true;
+  currentPage = Page::AI;
   pageNeedsDraw = true;
 }
 
@@ -2663,40 +2736,65 @@ void previousPage() {
 void handleTouchscreen() {
   TouchPoint point = readTouchPoint();
 
-  if (point.pressed && !touchWasPressed &&
-      millis() - lastTouchMillis > 150) {
+  if (point.pressed && !touchWasPressed && millis() - lastTouchMillis > 140) {
     touchWasPressed = true;
     lastTouchMillis = millis();
+
+    Serial.printf("TOUCH x=%d y=%d page=%d ai=%d kb=%d\n",
+                  point.x, point.y, static_cast<int>(currentPage),
+                  aiModeActive, aiKeyboardOpen);
 
     if (aiKeyboardOpen) {
       handleAiKeyboardTap(point.x, point.y);
       return;
     }
 
-    if (currentPage == Page::AI) {
-      if (point.y < 34 && point.x < 80) {
-        previousPage();
-      } else if (point.y < 34 && point.x > 240) {
-        nextPage();
-      } else if (point.y >= 158 && point.y <= 210) {
+    if (aiModeActive || currentPage == Page::AI) {
+      aiModeActive = true;
+      if (point.y <= 36 && point.x >= 250) {
+        exitAiMode();
+      } else if (point.y >= 150 && point.x >= 215) {
         aiKeyboardOpen = true;
         drawAiKeyboard();
       }
       return;
     }
 
-    if (point.x < 95) {
-      previousPage();
-    } else if (point.x > 225) {
-      nextPage();
-    } else {
-      changePage(Page::AI);
+    if (currentPage == Page::SETTINGS) {
+      if (point.y >= 38 && point.y < 83) {
+        applyTheme((config.uiTheme + 1) % 3);
+        saveConfiguration();
+        pageNeedsDraw = true;
+      } else if (point.y >= 85 && point.y < 132 && point.x < 160) {
+        config.autoRotate = !config.autoRotate;
+        saveConfiguration();
+        pageNeedsDraw = true;
+      } else if (point.y >= 85 && point.y < 132 && point.x >= 160) {
+        if (config.pageSeconds == 5) config.pageSeconds = 10;
+        else if (config.pageSeconds == 10) config.pageSeconds = 20;
+        else if (config.pageSeconds == 20) config.pageSeconds = 30;
+        else config.pageSeconds = 5;
+        saveConfiguration();
+        pageNeedsDraw = true;
+      } else if (point.y >= 133 && point.y < 180 && point.x < 160) {
+        config.brightness = config.brightness >= 245 ? 55 : config.brightness + 40;
+        applyBrightness();
+        saveConfiguration();
+        pageNeedsDraw = true;
+      } else if (point.y >= 181 && point.x < 160) {
+        enterAiMode();
+      } else if (point.y >= 181 && point.x >= 160) {
+        reopenSetup();
+      }
+      return;
     }
+
+    if (point.x < 95) previousPage();
+    else if (point.x > 225) nextPage();
+    else changePage(Page::SETTINGS);
   }
 
-  if (!point.pressed) {
-    touchWasPressed = false;
-  }
+  if (!point.pressed) touchWasPressed = false;
 }
 
 void handleButton() {
@@ -2713,6 +2811,8 @@ void handleButton() {
 
     if (duration >= LONG_PRESS_MS) {
       reopenSetup();
+    } else if (aiModeActive) {
+      exitAiMode();
     } else {
       nextPage();
     }
@@ -2720,9 +2820,8 @@ void handleButton() {
 }
 
 void maintainPageRotation() {
-  if (!config.autoRotate) {
-    return;
-  }
+  if (aiModeActive || aiKeyboardOpen || aiBusy || currentPage == Page::SETTINGS) return;
+  if (!config.autoRotate) return;
 
   uint32_t interval = static_cast<uint32_t>(config.pageSeconds) * 1000UL;
 
@@ -2838,7 +2937,8 @@ void setup() {
   bootMillis = millis();
 
   pinMode(PIN_BACKLIGHT, OUTPUT);
-  digitalWrite(PIN_BACKLIGHT, HIGH);
+  ledcSetup(0, 5000, 8);
+  ledcAttachPin(PIN_BACKLIGHT, 0);
   pinMode(PIN_BOOT, INPUT_PULLUP);
 
   diagnostics.resetReason = esp_reset_reason();
@@ -2850,6 +2950,9 @@ void setup() {
   touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
 
   loadPreferences();
+  applyTheme(config.uiTheme);
+  config.brightness = constrain(config.brightness, 25, 255);
+  applyBrightness();
 
   tft.init();
   tft.setRotation(1);
@@ -2891,6 +2994,7 @@ void loop() {
   maintainPersistence();
 
   if (pageNeedsDraw && !aiKeyboardOpen) {
+    if (aiModeActive) currentPage = Page::AI;
     drawCurrentLayout();
     updateCurrentValues();
 
