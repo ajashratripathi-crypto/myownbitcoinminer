@@ -33,12 +33,12 @@
     6. Paramus Weather (OpenWeather)
     7. Device Health
     8. Settings
-    9. Local AI Doctor
+    9. OpenRouter AI Assistant + touchscreen keyboard
 
   Touch:
     - Tap left third: previous page
     - Tap right third: next page
-    - Tap center: open/re-run Local AI Doctor
+    - Tap center: open AI Assistant
     - Uses an in-file XPT2046 driver; no extra library is required
 
   Important:
@@ -103,6 +103,18 @@ String localAiLine2 = "";
 String localAiLine3 = "";
 uint16_t localAiColor = 0xFFE0;
 
+bool aiKeyboardOpen = false;
+bool aiUppercase = false;
+bool aiSymbols = false;
+bool aiRequestPending = false;
+bool aiBusy = false;
+String aiInput = "";
+String aiQuestion = "";
+String aiAnswer = "Tap the message box to ask anything.";
+String aiStatus = "READY";
+String aiModelUsed = "";
+uint32_t aiLastRequestMs = 0;
+
 TFT_eSPI tft = TFT_eSPI();
 Preferences preferences;
 
@@ -127,7 +139,7 @@ static constexpr uint16_t C_BLUE        = 0x049F;
 // Firmware constants
 // ============================================================================
 
-static const char* FW_VERSION = "9.0.0-beta";
+static const char* FW_VERSION = "10.1.0-ai";
 static const char* AP_NAME = "CYD-Miner-Setup";
 static const char* AP_PASSWORD = "bitcoin123";
 
@@ -135,6 +147,8 @@ static const char* POOL_HOST = "mine.ocean.xyz";
 static constexpr uint16_t POOL_PORT = 3334;
 static const char* POOL_PASSWORD = "x";
 static const char* WORKER_SUFFIX = "CYD01";
+static const char* OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+static const char* OPENROUTER_MODEL = "openrouter/free";
 
 static const char* NJ_TZ = "EST5EDT,M3.2.0/2,M11.1.0/2";
 static constexpr double PARAMUS_LAT = 40.9445428;
@@ -163,6 +177,7 @@ struct AppConfig {
   String deviceName = "ORANGE NODE";
   String bitcoinAddress = "";
   String openWeatherKey = "";
+  String openRouterKey = "";
   bool autoRotate = true;
   uint16_t pageSeconds = 10;
 };
@@ -182,6 +197,7 @@ LifetimeStats lifetime;
 char portalDeviceName[25] = "ORANGE NODE";
 char portalBitcoinAddress[91] = "";
 char portalWeatherKey[65] = "";
+char portalOpenRouterKey[129] = "";
 char portalAutoRotate[2] = "1";
 char portalPageSeconds[4] = "10";
 bool portalSaveRequested = false;
@@ -409,6 +425,7 @@ void loadPreferences() {
   config.deviceName = preferences.getString("name", "ORANGE NODE");
   config.bitcoinAddress = preferences.getString("btc", "");
   config.openWeatherKey = preferences.getString("weather", "");
+  config.openRouterKey = preferences.getString("openrouter", "");
   config.autoRotate = preferences.getBool("rotate", true);
   config.pageSeconds = preferences.getUShort("pageSec", 10);
 
@@ -431,6 +448,7 @@ void saveConfiguration() {
   preferences.putString("name", config.deviceName);
   preferences.putString("btc", config.bitcoinAddress);
   preferences.putString("weather", config.openWeatherKey);
+  preferences.putString("openrouter", config.openRouterKey);
   preferences.putBool("rotate", config.autoRotate);
   preferences.putUShort("pageSec", config.pageSeconds);
 
@@ -1834,44 +1852,208 @@ void drawSettingsLayout() {
   tft.fillScreen(C_BG);
   drawHeader("SETTINGS", String("V") + FW_VERSION, true);
 
-  panel(8, 42, 304, 42, C_PANEL);
-  leftText("POOL", 17, 49, C_MUTED, C_PANEL, 1);
-  leftText(String(POOL_HOST) + ":" + String(POOL_PORT), 17, 65, C_TEXT, C_PANEL, 2);
+  panel(8, 40, 304, 34, C_PANEL);
+  leftText("POOL", 16, 47, C_MUTED, C_PANEL, 1);
+  leftText(String(POOL_HOST) + ":" + String(POOL_PORT), 86, 57, C_TEXT, C_PANEL, 2);
 
-  panel(8, 92, 304, 42, C_PANEL);
-  leftText("PAYOUT ADDRESS", 17, 99, C_MUTED, C_PANEL, 1);
-  leftText(shortAddress(config.bitcoinAddress), 17, 115, C_ORANGE, C_PANEL, 2);
+  panel(8, 80, 304, 34, C_PANEL);
+  leftText("PAYOUT", 16, 87, C_MUTED, C_PANEL, 1);
+  leftText(shortAddress(config.bitcoinAddress), 86, 97, C_ORANGE, C_PANEL, 2);
 
-  panel(8, 142, 304, 42, C_PANEL);
-  leftText("WEATHER API", 17, 149, C_MUTED, C_PANEL, 1);
-  leftText(config.openWeatherKey.isEmpty() ? "NOT CONFIGURED" : "CONFIGURED", 17, 165,
+  panel(8, 120, 304, 34, C_PANEL);
+  leftText("WEATHER", 16, 127, C_MUTED, C_PANEL, 1);
+  leftText(config.openWeatherKey.isEmpty() ? "NOT CONFIGURED" : "CONFIGURED", 110, 137,
            config.openWeatherKey.isEmpty() ? C_RED : C_GREEN, C_PANEL, 2);
 
-  panel(8, 192, 304, 24, C_PANEL);
-  centerText("HOLD BOOT 3 SEC TO REOPEN SETUP", 160, 204, C_CYAN, C_PANEL, 1);
+  panel(8, 160, 304, 34, C_PANEL);
+  leftText("OPENROUTER", 16, 167, C_MUTED, C_PANEL, 1);
+  leftText(config.openRouterKey.isEmpty() ? "NOT CONFIGURED" : "CONFIGURED", 126, 177,
+           config.openRouterKey.isEmpty() ? C_RED : C_GREEN, C_PANEL, 2);
+
+  panel(8, 200, 304, 24, C_PANEL);
+  centerText("HOLD BOOT 3 SEC TO REOPEN SETUP", 160, 212, C_CYAN, C_PANEL, 1);
 
   drawPageDots();
 }
 
 
+void drawWrappedText(const String& raw, int x, int y, int width, int maxLines,
+                     uint16_t color, uint16_t background, uint8_t font) {
+  tft.setTextFont(font);
+  tft.setTextColor(color, background);
+  tft.setTextDatum(TL_DATUM);
+
+  String remaining = raw;
+  remaining.replace("\r", " ");
+  remaining.replace("\n", " ");
+  remaining.trim();
+
+  int lineHeight = font == 1 ? 10 : 17;
+
+  for (int lineIndex = 0; lineIndex < maxLines && remaining.length() > 0; lineIndex++) {
+    int split = remaining.length();
+
+    while (split > 1 && tft.textWidth(remaining.substring(0, split)) > width) {
+      split--;
+    }
+
+    if (split < static_cast<int>(remaining.length())) {
+      int space = remaining.lastIndexOf(' ', split);
+      if (space > 0) split = space;
+    }
+
+    String line = remaining.substring(0, split);
+    line.trim();
+
+    if (lineIndex == maxLines - 1 && split < static_cast<int>(remaining.length())) {
+      while (line.length() > 2 && tft.textWidth(line + "...") > width) {
+        line.remove(line.length() - 1);
+      }
+      line += "...";
+    }
+
+    tft.drawString(line, x, y + lineIndex * lineHeight, font);
+    remaining = remaining.substring(split);
+    remaining.trim();
+  }
+}
+
 void drawAiLayout() {
-  analyzeMinerLocally();
-
   tft.fillScreen(C_BG);
-  drawHeader("LOCAL AI DOCTOR", "OFFLINE", true);
+  drawHeader("BITCOIN LAB AI", aiBusy ? "THINKING" : aiStatus,
+             WiFi.status() == WL_CONNECTED && !config.openRouterKey.isEmpty());
 
-  panel(8, 42, 304, 48, C_PANEL);
-  centerText(localAiHeadline, 160, 66, localAiColor, C_PANEL, 2);
+  panel(8, 38, 304, 116, C_PANEL);
+  leftText("AI", 17, 45, C_ORANGE, C_PANEL, 1);
+  drawWrappedText(aiAnswer, 17, 62, 286, 5, C_TEXT, C_PANEL, 2);
 
-  panel(8, 98, 304, 84, C_PANEL);
-  leftText(localAiLine1, 18, 110, C_TEXT, C_PANEL, 2);
-  leftText(localAiLine2, 18, 134, C_TEXT, C_PANEL, 2);
-  leftText(localAiLine3, 18, 158, C_MUTED, C_PANEL, 2);
+  panel(8, 162, 242, 44, C_PANEL);
+  leftText("MESSAGE", 17, 168, C_MUTED, C_PANEL, 1);
+  String preview = aiInput.isEmpty() ? "Tap here to type..." : aiInput;
+  if (preview.length() > 30) preview = preview.substring(preview.length() - 30);
+  leftText(preview, 17, 187, aiInput.isEmpty() ? C_MUTED : C_TEXT, C_PANEL, 2);
 
-  panel(8, 190, 304, 26, C_PANEL);
-  centerText("TAP CENTER TO RE-ANALYZE", 160, 203, C_CYAN, C_PANEL, 1);
+  tft.fillRoundRect(258, 162, 54, 44, 7, C_ORANGE_DARK);
+  centerText("TYPE", 285, 184, C_TEXT, C_ORANGE_DARK, 2);
+
+  panel(8, 211, 304, 18, C_PANEL);
+  String modelLabel = aiModelUsed.isEmpty() ? String(OPENROUTER_MODEL) : aiModelUsed;
+  if (modelLabel.length() > 34) modelLabel = modelLabel.substring(0, 34);
+  centerText(modelLabel, 160, 220, C_CYAN, C_PANEL, 1);
 
   drawPageDots();
+}
+
+void drawKeyboardKey(int x, int y, int w, int h, const String& label, uint16_t color) {
+  tft.fillRoundRect(x, y, w, h, 4, color);
+  centerText(label, x + w / 2, y + h / 2, C_TEXT, color, label.length() == 1 ? 2 : 1);
+}
+
+void drawAiKeyboard() {
+  tft.fillScreen(C_BG);
+
+  tft.fillRect(0, 0, 320, 40, C_HEADER);
+  String shown = aiInput;
+  if (shown.length() > 35) shown = shown.substring(shown.length() - 35);
+  leftText(shown + "_", 7, 20, C_TEXT, C_HEADER, 2);
+
+  const char* lowerRows[3] = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
+  const char* upperRows[3] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
+  const char* symbolRows[3] = {"1234567890", "-_/:;@#$%", ".,?!()+=*"};
+
+  const char** rows = aiSymbols ? symbolRows : (aiUppercase ? upperRows : lowerRows);
+
+  for (int i = 0; i < 10; i++) {
+    drawKeyboardKey(i * 32 + 1, 44, 30, 36, String(rows[0][i]), C_PANEL_ALT);
+  }
+
+  for (int i = 0; i < 9; i++) {
+    drawKeyboardKey(16 + i * 32 + 1, 83, 30, 36, String(rows[1][i]), C_PANEL_ALT);
+  }
+
+  drawKeyboardKey(1, 122, 44, 36, aiSymbols ? "ABC" : (aiUppercase ? "abc" : "SHIFT"), C_BLUE);
+
+  int row3Count = strlen(rows[2]);
+  int row3Width = (230 / row3Count);
+  for (int i = 0; i < row3Count; i++) {
+    drawKeyboardKey(47 + i * row3Width, 122, row3Width - 2, 36, String(rows[2][i]), C_PANEL_ALT);
+  }
+
+  drawKeyboardKey(279, 122, 40, 36, "<-", C_RED);
+  drawKeyboardKey(1, 162, 48, 36, aiSymbols ? "ABC" : "123", C_PURPLE);
+  drawKeyboardKey(52, 162, 132, 36, "SPACE", C_PANEL_ALT);
+  drawKeyboardKey(187, 162, 57, 36, "CLEAR", C_RED);
+  drawKeyboardKey(247, 162, 72, 36, "SEND", C_GREEN);
+  drawKeyboardKey(1, 202, 318, 34, "CANCEL", C_BORDER);
+}
+
+void closeAiKeyboard() {
+  aiKeyboardOpen = false;
+  pageNeedsDraw = true;
+}
+
+void deleteAiCharacter() {
+  if (aiInput.length() == 0) return;
+  int index = aiInput.length() - 1;
+  while (index > 0 && (static_cast<uint8_t>(aiInput[index]) & 0xC0) == 0x80) index--;
+  aiInput.remove(index);
+}
+
+void appendAiCharacter(char value) {
+  if (aiInput.length() < 220) aiInput += value;
+}
+
+void handleAiKeyboardTap(int x, int y) {
+  const char* lowerRows[3] = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
+  const char* upperRows[3] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
+  const char* symbolRows[3] = {"1234567890", "-_/:;@#$%", ".,?!()+=*"};
+  const char** rows = aiSymbols ? symbolRows : (aiUppercase ? upperRows : lowerRows);
+
+  if (y >= 44 && y < 80) {
+    int index = x / 32;
+    if (index >= 0 && index < 10) appendAiCharacter(rows[0][index]);
+  } else if (y >= 83 && y < 119) {
+    if (x >= 16 && x < 304) {
+      int index = (x - 16) / 32;
+      if (index >= 0 && index < 9) appendAiCharacter(rows[1][index]);
+    }
+  } else if (y >= 122 && y < 158) {
+    if (x < 46) {
+      if (aiSymbols) aiSymbols = false;
+      else aiUppercase = !aiUppercase;
+    } else if (x >= 279) {
+      deleteAiCharacter();
+    } else {
+      int count = strlen(rows[2]);
+      int width = 230 / count;
+      int index = (x - 47) / width;
+      if (index >= 0 && index < count) appendAiCharacter(rows[2][index]);
+    }
+  } else if (y >= 162 && y < 198) {
+    if (x < 50) {
+      aiSymbols = !aiSymbols;
+      if (aiSymbols) aiUppercase = false;
+    } else if (x < 185) {
+      appendAiCharacter(' ');
+    } else if (x < 245) {
+      aiInput = "";
+    } else {
+      aiInput.trim();
+      if (!aiInput.isEmpty()) {
+        aiQuestion = aiInput;
+        aiAnswer = "Thinking...";
+        aiStatus = "SENDING";
+        aiRequestPending = true;
+        closeAiKeyboard();
+        return;
+      }
+    }
+  } else if (y >= 202) {
+    closeAiKeyboard();
+    return;
+  }
+
+  drawAiKeyboard();
 }
 
 void drawCurrentLayout() {
@@ -2141,9 +2323,141 @@ void updateCurrentValues() {
     case Page::DEVICE: updateDeviceValues(); break;
     case Page::SETTINGS: break;
     case Page::AI:
-      analyzeMinerLocally();
       break;
   }
+}
+
+
+String buildAiTelemetry() {
+  String telemetry;
+  telemetry.reserve(320);
+  telemetry += "Miner telemetry: ";
+  telemetry += "hashrate=" + String(smoothedHashrateKHs, 2) + " kH/s, ";
+  telemetry += "pool_connected=" + String(pool.tcpConnected ? "true" : "false") + ", ";
+  telemetry += "subscribed=" + String(pool.subscribed ? "true" : "false") + ", ";
+  telemetry += "authorized=" + String(pool.authorized ? "true" : "false") + ", ";
+  telemetry += "jobs=" + String(pool.jobsReceived) + ", ";
+  telemetry += "accepted=" + String(acceptedShares) + ", ";
+  telemetry += "rejected=" + String(rejectedShares) + ", ";
+  telemetry += "difficulty=" + String(pool.difficulty, 8) + ", ";
+  telemetry += "wifi_rssi=" + String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127) + " dBm, ";
+  telemetry += "free_heap=" + String(ESP.getFreeHeap()) + ", ";
+  telemetry += "last_pool_status=" + pool.lastError + ".";
+  return telemetry;
+}
+
+void callOpenRouterAi() {
+  aiRequestPending = false;
+  aiBusy = true;
+  aiStatus = "THINKING";
+  pageNeedsDraw = true;
+  drawAiLayout();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    aiAnswer = "Wi-Fi is offline.";
+    aiStatus = "OFFLINE";
+    aiBusy = false;
+    pageNeedsDraw = true;
+    return;
+  }
+
+  if (config.openRouterKey.isEmpty()) {
+    aiAnswer = "OpenRouter API key is missing. Hold BOOT for setup.";
+    aiStatus = "NO API KEY";
+    aiBusy = false;
+    pageNeedsDraw = true;
+    return;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient https;
+  https.setTimeout(35000);
+
+  if (!https.begin(client, OPENROUTER_URL)) {
+    aiAnswer = "Could not start the OpenRouter connection.";
+    aiStatus = "ERROR";
+    aiBusy = false;
+    pageNeedsDraw = true;
+    return;
+  }
+
+  https.addHeader("Content-Type", "application/json");
+  https.addHeader("Authorization", String("Bearer ") + config.openRouterKey);
+  https.addHeader("HTTP-Referer", "https://cyd-bitcoin-lab.local");
+  https.addHeader("X-Title", "CYD Bitcoin Lab");
+
+  JsonDocument request;
+  request["model"] = OPENROUTER_MODEL;
+  request["max_tokens"] = 180;
+  request["temperature"] = 0.35;
+
+  JsonArray messages = request["messages"].to<JsonArray>();
+
+  JsonObject systemMessage = messages.add<JsonObject>();
+  systemMessage["role"] = "system";
+  systemMessage["content"] =
+    "You are Bitcoin Lab AI on a 320x240 ESP32 display. "
+    "Answer any normal user question clearly and briefly. "
+    "Use plain text, no markdown tables, and usually stay under 90 words. "
+    "When the question concerns this miner, use the supplied telemetry. "
+    "Never request a seed phrase, private key, or wallet password.";
+
+  JsonObject telemetryMessage = messages.add<JsonObject>();
+  telemetryMessage["role"] = "system";
+  telemetryMessage["content"] = buildAiTelemetry();
+
+  JsonObject userMessage = messages.add<JsonObject>();
+  userMessage["role"] = "user";
+  userMessage["content"] = aiQuestion;
+
+  String payload;
+  serializeJson(request, payload);
+
+  int responseCode = https.POST(payload);
+  String responseBody = https.getString();
+  https.end();
+
+  if (responseCode == 200) {
+    JsonDocument response;
+    DeserializationError error = deserializeJson(response, responseBody);
+
+    if (!error) {
+      String answer = response["choices"][0]["message"]["content"] | "";
+      String model = response["model"] | OPENROUTER_MODEL;
+      answer.trim();
+
+      if (!answer.isEmpty()) {
+        aiAnswer = answer;
+        aiModelUsed = model;
+        aiStatus = "READY";
+      } else {
+        aiAnswer = "OpenRouter returned an empty answer.";
+        aiStatus = "EMPTY";
+      }
+    } else {
+      aiAnswer = "The AI response could not be decoded.";
+      aiStatus = "JSON ERROR";
+    }
+  } else {
+    JsonDocument errorDocument;
+    String detail;
+
+    if (deserializeJson(errorDocument, responseBody) == DeserializationError::Ok) {
+      detail = errorDocument["error"]["message"] | "";
+    }
+
+    if (detail.isEmpty()) detail = "HTTP " + String(responseCode);
+    if (detail.length() > 180) detail = detail.substring(0, 180);
+
+    aiAnswer = detail;
+    aiStatus = "ERROR";
+  }
+
+  aiLastRequestMs = millis();
+  aiBusy = false;
+  pageNeedsDraw = true;
 }
 
 // ============================================================================
@@ -2158,6 +2472,7 @@ void configureWifi() {
   snprintf(portalDeviceName, sizeof(portalDeviceName), "%s", config.deviceName.c_str());
   snprintf(portalBitcoinAddress, sizeof(portalBitcoinAddress), "%s", config.bitcoinAddress.c_str());
   snprintf(portalWeatherKey, sizeof(portalWeatherKey), "%s", config.openWeatherKey.c_str());
+  snprintf(portalOpenRouterKey, sizeof(portalOpenRouterKey), "%s", config.openRouterKey.c_str());
   snprintf(portalAutoRotate, sizeof(portalAutoRotate), "%d", config.autoRotate ? 1 : 0);
   snprintf(portalPageSeconds, sizeof(portalPageSeconds), "%u", config.pageSeconds);
 
@@ -2199,6 +2514,13 @@ void configureWifi() {
     64
   );
 
+  WiFiManagerParameter pOpenRouterKey(
+    "openRouterKey",
+    "OpenRouter API key",
+    portalOpenRouterKey,
+    128
+  );
+
   WiFiManagerParameter pAutoRotate(
     "autoRotate",
     "Auto rotate pages: 1=yes, 0=no",
@@ -2216,11 +2538,12 @@ void configureWifi() {
   manager.addParameter(&pName);
   manager.addParameter(&pBitcoinAddress);
   manager.addParameter(&pWeatherKey);
+  manager.addParameter(&pOpenRouterKey);
   manager.addParameter(&pAutoRotate);
   manager.addParameter(&pPageSeconds);
 
   manager.setSaveConfigCallback(savePortalCallback);
-  manager.setTitle("CYD Bitcoin Lab V9 Setup");
+  manager.setTitle("CYD Bitcoin Lab V10 AI Setup");
   manager.setClass("invert");
   manager.setConnectTimeout(30);
   manager.setConfigPortalTimeout(300);
@@ -2239,12 +2562,14 @@ void configureWifi() {
     config.deviceName = pName.getValue();
     config.bitcoinAddress = pBitcoinAddress.getValue();
     config.openWeatherKey = pWeatherKey.getValue();
+    config.openRouterKey = pOpenRouterKey.getValue();
     config.autoRotate = atoi(pAutoRotate.getValue()) != 0;
     config.pageSeconds = constrain(atoi(pPageSeconds.getValue()), 5, 60);
 
     config.deviceName.trim();
     config.bitcoinAddress.trim();
     config.openWeatherKey.trim();
+    config.openRouterKey.trim();
 
     if (config.deviceName.isEmpty()) {
       config.deviceName = "ORANGE NODE";
@@ -2339,20 +2664,31 @@ void handleTouchscreen() {
   TouchPoint point = readTouchPoint();
 
   if (point.pressed && !touchWasPressed &&
-      millis() - lastTouchMillis > 180) {
+      millis() - lastTouchMillis > 150) {
     touchWasPressed = true;
     lastTouchMillis = millis();
 
-    // Stylus/touch navigation:
-    // left third = previous page, right third = next page.
-    // center on AI page = run diagnosis again.
+    if (aiKeyboardOpen) {
+      handleAiKeyboardTap(point.x, point.y);
+      return;
+    }
+
+    if (currentPage == Page::AI) {
+      if (point.y < 34 && point.x < 80) {
+        previousPage();
+      } else if (point.y < 34 && point.x > 240) {
+        nextPage();
+      } else if (point.y >= 158 && point.y <= 210) {
+        aiKeyboardOpen = true;
+        drawAiKeyboard();
+      }
+      return;
+    }
+
     if (point.x < 95) {
       previousPage();
     } else if (point.x > 225) {
       nextPage();
-    } else if (currentPage == Page::AI) {
-      analyzeMinerLocally();
-      pageNeedsDraw = true;
     } else {
       changePage(Page::AI);
     }
@@ -2544,12 +2880,17 @@ void loop() {
 
   handleButton();
   handleTouchscreen();
+
+  if (aiRequestPending && !aiBusy) {
+    callOpenRouterAi();
+  }
+
   maintainPageRotation();
   maintainWifi();
   maintainData();
   maintainPersistence();
 
-  if (pageNeedsDraw) {
+  if (pageNeedsDraw && !aiKeyboardOpen) {
     drawCurrentLayout();
     updateCurrentValues();
 
@@ -2565,7 +2906,7 @@ void loop() {
   if (millis() - lastValueRefresh >= VALUE_REFRESH_MS) {
     lastValueRefresh = millis();
     sampleHashrate();
-    updateCurrentValues();
+    if (!aiKeyboardOpen) updateCurrentValues();
   }
 
   if (millis() - lastSerialJson >= SERIAL_JSON_MS) {
